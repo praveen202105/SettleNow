@@ -1,9 +1,10 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { LockKeyhole, Mail } from 'lucide-react';
 import { useState } from 'react';
 import { MemoryRouter } from 'react-router-dom';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ConfirmDialog } from '../../../apps/web/src/components/ui/ConfirmDialog';
 import { Field, FieldError, FieldLabel } from '../../../apps/web/src/components/ui/Field';
@@ -14,7 +15,32 @@ import {
 } from '../../../apps/web/src/components/ui/InputGroup';
 import { PasswordInput } from '../../../apps/web/src/components/ui/PasswordInput';
 import { Select } from '../../../apps/web/src/components/ui/Select';
-import { AuthModeSwitch } from '../../../apps/web/src/features/auth/AuthPage';
+import { activityLabel } from '../../../apps/web/src/features/activity/ActivityTimeline';
+import { AuthModeSwitch, AuthPage } from '../../../apps/web/src/features/auth/AuthPage';
+import { authQueryKey } from '../../../apps/web/src/features/auth/hooks';
+import { CustomerCombobox } from '../../../apps/web/src/features/customers/CustomerCombobox';
+import { SecurityPage } from '../../../apps/web/src/features/settings/SecurityPage';
+import type { CustomerResponse } from '../../../packages/shared/src/types';
+
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
+
+function jsonResponse(data: unknown, status = 200) {
+  return Promise.resolve(
+    new Response(JSON.stringify(data), {
+      headers: { 'content-type': 'application/json' },
+      status,
+    }),
+  );
+}
+
+function requestUrl(input: RequestInfo | URL): string {
+  if (typeof input === 'string') return input;
+  if (input instanceof URL) return input.href;
+  return input.url;
+}
 
 describe('form primitives', () => {
   it('renders a correctly sized input addon without replacing the control label', () => {
@@ -110,5 +136,145 @@ describe('navigation and overlays', () => {
       />,
     );
     await waitFor(() => expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus());
+  });
+});
+
+describe('Google authentication UI', () => {
+  it('labels Google signup and login audit events explicitly', () => {
+    const baseEvent = {
+      createdAt: '2026-08-08T00:00:00.000Z',
+      entityId: 'user-1',
+      entityType: 'user',
+      id: 'event-1',
+      metadata: { provider: 'google' },
+      orderId: null,
+      requestId: 'request-1',
+      userId: 'user-1',
+    } as const;
+
+    expect(activityLabel({ ...baseEvent, action: 'auth.signup' })).toBe('Google account created');
+    expect(activityLabel({ ...baseEvent, action: 'auth.login' })).toBe('Signed in with Google');
+  });
+
+  it('shows an accessible Google option and actionable callback errors', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const url = requestUrl(input);
+      if (url.endsWith('/auth/config')) {
+        return jsonResponse({ data: { providers: { google: true, password: true } } });
+      }
+      return jsonResponse(
+        { error: { code: 'AUTH_REQUIRED', message: 'Sign in to continue.' } },
+        401,
+      );
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/login?authError=GOOGLE_ACCOUNT_LINK_REQUIRED']}>
+          <AuthPage mode="login" />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByRole('button', { name: 'Continue with Google' })).toBeVisible();
+    expect(screen.getByText(/Sign in with your password, then connect Google/)).toBeVisible();
+  });
+
+  it('prevents a Google-only user from disconnecting the last sign-in method', async () => {
+    const googleUser = {
+      authMethods: ['google'] as const,
+      createdAt: '2026-08-08T00:00:00.000Z',
+      displayName: 'Google User',
+      email: 'google@example.com',
+      id: 'user-1',
+    };
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const url = requestUrl(input);
+      if (url.endsWith('/auth/config')) {
+        return jsonResponse({ data: { providers: { google: true, password: true } } });
+      }
+      return jsonResponse({ data: googleUser });
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(authQueryKey, googleUser);
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/settings/security']}>
+          <SecurityPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText(/Google is your only sign-in method/)).toBeVisible();
+    expect(await screen.findByRole('button', { name: 'Disconnect' })).toBeDisabled();
+  });
+});
+
+describe('customer directory UI', () => {
+  const customer: CustomerResponse = {
+    createdAt: '2026-08-08T00:00:00.000Z',
+    id: 'customer-1',
+    mobile: '+919876543210',
+    name: 'Acme Corporation',
+    updatedAt: '2026-08-08T00:00:00.000Z',
+  };
+
+  function CustomerHarness() {
+    const [selected, setSelected] = useState<CustomerResponse | null>(null);
+    return <CustomerCombobox value={selected} onValueChange={setSelected} />;
+  }
+
+  it('searches and selects an existing customer with the keyboard', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(() =>
+      jsonResponse({
+        data: [customer],
+        meta: { page: 1, pageSize: 20, total: 1, totalPages: 1 },
+      }),
+    );
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const user = userEvent.setup();
+    render(
+      <QueryClientProvider client={client}>
+        <CustomerHarness />
+      </QueryClientProvider>,
+    );
+
+    await user.click(screen.getByRole('combobox', { name: 'Customer' }));
+    const search = await screen.findByRole('textbox', { name: 'Search customers' });
+    await user.type(search, 'Acme');
+    await screen.findByRole('option', { name: /Acme Corporation/ });
+    await user.keyboard('{ArrowDown}{Enter}');
+
+    expect(screen.getByRole('combobox', { name: 'Customer' })).toHaveTextContent(
+      'Acme Corporation',
+    );
+    expect(screen.getByRole('combobox', { name: 'Customer' })).toHaveTextContent('+919876543210');
+  });
+
+  it('creates and automatically selects a new customer', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input, options) => {
+      if (options?.method === 'POST') return jsonResponse({ data: customer }, 201);
+      return jsonResponse({
+        data: [],
+        meta: { page: 1, pageSize: 20, total: 0, totalPages: 1 },
+      });
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const user = userEvent.setup();
+    render(
+      <QueryClientProvider client={client}>
+        <CustomerHarness />
+      </QueryClientProvider>,
+    );
+
+    await user.click(screen.getByRole('combobox', { name: 'Customer' }));
+    await user.click(await screen.findByRole('button', { name: 'Add new customer' }));
+    await user.type(screen.getByLabelText('Customer name'), customer.name);
+    await user.type(screen.getByLabelText('Mobile number'), customer.mobile);
+    await user.click(screen.getByRole('button', { name: 'Add customer' }));
+
+    await waitFor(() =>
+      expect(screen.getByRole('combobox', { name: 'Customer' })).toHaveTextContent(customer.name),
+    );
   });
 });

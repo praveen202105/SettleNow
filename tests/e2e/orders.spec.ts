@@ -27,15 +27,22 @@ test('creates and settles a $1,000 order without allowing overpayment', async ({
   await page.getByLabel('Password', { exact: true }).fill('SecurePass123!');
   await page.getByRole('button', { name: 'Create Account' }).click();
 
-  await expect(page.getByRole('heading', { name: 'Orders' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Orders', exact: true })).toBeVisible();
   await expectNoHorizontalOverflow(page);
   await page
     .getByRole('link', { name: /New Order/ })
     .first()
     .click();
+  await page.setViewportSize({ width: 320, height: 800 });
+  await page.getByRole('combobox', { name: 'Customer' }).click();
+  await page.getByRole('button', { name: 'Add new customer' }).click();
+  await page.getByLabel('Customer name').fill('Northstar Labs');
+  await page.getByLabel('Mobile number').fill('+91 98765-43210');
+  await expectNoHorizontalOverflow(page);
+  await page.getByRole('button', { name: 'Add customer' }).click();
+  await expect(page.getByRole('combobox', { name: 'Customer' })).toContainText('Northstar Labs');
   await page.setViewportSize({ width: 768, height: 900 });
   await expectNoHorizontalOverflow(page);
-  await page.getByLabel('Customer name').fill('Northstar Labs');
   await page.getByLabel('Due date').fill('2099-12-31');
   await page.getByLabel('Description').fill('Annual subscription');
   await page.getByLabel('Quantity').fill('1');
@@ -45,6 +52,19 @@ test('creates and settles a $1,000 order without allowing overpayment', async ({
   await expect(page.getByRole('heading', { name: /ORD-/ })).toBeVisible();
   const orderId = new URL(page.url()).pathname.split('/').at(-1);
   expect(orderId).toBeTruthy();
+  await expect(page.getByText('+919876543210', { exact: true })).toBeVisible();
+
+  await page.getByRole('link', { name: 'New Order' }).click();
+  await page.getByRole('combobox', { name: 'Customer' }).click();
+  await page.getByRole('option', { name: /Northstar Labs/ }).click();
+  await expect(page.getByRole('combobox', { name: 'Customer' })).toContainText('+919876543210');
+  await page.getByLabel('Due date').fill('2099-12-31');
+  await page.getByLabel('Description').fill('Follow-up service');
+  await page.getByLabel('Quantity').fill('1');
+  await page.getByLabel('Unit price').fill('100.00');
+  await page.getByRole('button', { name: 'Create order' }).click();
+  await expect(page.getByRole('heading', { name: /ORD-/ })).toBeVisible();
+  await page.goto(`/orders/${orderId}`);
 
   await page.getByRole('button', { name: 'Record payment' }).first().click();
   await page.getByLabel('Amount').fill('400.00');
@@ -128,4 +148,19 @@ test('authentication fields render cleanly at the minimum supported width', asyn
   const iconBox = await icons.first().boundingBox();
   expect(iconBox?.width).toBeGreaterThanOrEqual(16);
   expect(iconBox?.width).toBeLessThanOrEqual(20);
+});
+
+test('signs in through the complete Google OAuth redirect flow', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/login');
+  await page.getByRole('button', { name: 'Continue with Google' }).click();
+
+  await expect(page).toHaveURL(/\/orders$/);
+  await expect(page.getByRole('heading', { name: 'Orders', exact: true })).toBeVisible();
+  await page.getByRole('link', { name: 'Security' }).click();
+  await expect(page.getByRole('heading', { name: 'Security' })).toBeVisible();
+  await expect(page.getByText('Google', { exact: true })).toBeVisible();
+  await expect(page.getByText(/Google is your only sign-in method/)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Disconnect' })).toBeDisabled();
+  await expectNoHorizontalOverflow(page);
 });

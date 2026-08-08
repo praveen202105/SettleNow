@@ -1,24 +1,27 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
+import type { IncomingMessage } from 'node:http';
 import path from 'node:path';
 
 import compression from 'compression';
 import cookieParser from 'cookie-parser';
 import express from 'express';
 import helmet from 'helmet';
+import { stdSerializers } from 'pino';
 import { pinoHttp } from 'pino-http';
 
 import { enforceOrigin } from './auth/middleware.js';
 import { env } from './config/env.js';
 import { errorHandler, notFoundHandler } from './http/errors.js';
 import { logger } from './lib/logger.js';
-import { authRouter } from './routes/auth.js';
+import { createAuthRouter, type AuthRouterOptions } from './routes/auth.js';
 import { activityRouter } from './routes/activity.js';
+import { customersRouter } from './routes/customers.js';
 import { exportsRouter } from './routes/exports.js';
 import { healthRouter } from './routes/health.js';
 import { ordersRouter } from './routes/orders.js';
 
-export function createApp() {
+export function createApp(options: AuthRouterOptions = {}) {
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', env.TRUST_PROXY ? 1 : false);
@@ -31,6 +34,15 @@ export function createApp() {
         const id = typeof provided === 'string' && provided.length <= 128 ? provided : randomUUID();
         response.setHeader('x-request-id', id);
         return id;
+      },
+      serializers: {
+        req(request: IncomingMessage) {
+          const serialized = stdSerializers.req(request);
+          if (serialized.url?.startsWith('/api/v1/auth/google/callback')) {
+            return { ...serialized, url: '/api/v1/auth/google/callback' };
+          }
+          return serialized;
+        },
       },
     }),
   );
@@ -56,8 +68,9 @@ export function createApp() {
 
   const api = express.Router();
   api.use('/health', healthRouter);
-  api.use('/auth', authRouter);
+  api.use('/auth', createAuthRouter(options));
   api.use('/activity', activityRouter);
+  api.use('/customers', customersRouter);
   api.use('/exports', exportsRouter);
   api.use('/orders', ordersRouter);
   app.use('/api/v1', api);

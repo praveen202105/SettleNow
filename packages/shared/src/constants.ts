@@ -6,6 +6,9 @@ export const AUDIT_ACTIONS = [
   'auth.signup',
   'auth.login',
   'auth.logout',
+  'auth.google.linked',
+  'auth.google.unlinked',
+  'customer.created',
   'order.created',
   'order.updated',
   'order.deleted',
@@ -15,6 +18,9 @@ export const AUDIT_ACTIONS = [
   'export.downloaded',
   'notification.sent',
 ] as const;
+
+export const AUTH_METHODS = ['password', 'google'] as const;
+export const GOOGLE_AUTH_INTENTS = ['signin', 'link'] as const;
 
 export const MAX_MONEY_CENTS = 9_000_000_000_000;
 export const MAX_LINE_ITEMS = 100;

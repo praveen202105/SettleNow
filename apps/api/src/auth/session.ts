@@ -2,10 +2,13 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 
 import type { Request, Response } from 'express';
 
+import type { AuthMethod } from '@settleflow/shared';
+
 import { env } from '../config/env.js';
 import { redis } from '../lib/redis.js';
 
-interface SessionRecord {
+export interface SessionRecord {
+  authenticatedWith?: AuthMethod;
   createdAt: string;
   id: string;
   userId: string;
@@ -32,11 +35,16 @@ export async function getSession(token: string | undefined): Promise<SessionReco
   return value ? (JSON.parse(value) as SessionRecord) : null;
 }
 
-export async function createSession(userId: string, response: Response): Promise<void> {
+export async function createSession(
+  userId: string,
+  response: Response,
+  authenticatedWith: AuthMethod = 'password',
+): Promise<void> {
   const token = randomBytes(32).toString('base64url');
   const ttlSeconds = env.SESSION_TTL_DAYS * 24 * 60 * 60;
   const expiresAt = new Date(Date.now() + ttlSeconds * 1_000);
   const session: SessionRecord = {
+    authenticatedWith,
     createdAt: new Date().toISOString(),
     id: randomUUID(),
     userId,
@@ -50,6 +58,16 @@ export async function createSession(userId: string, response: Response): Promise
     sameSite: 'lax',
     secure: env.NODE_ENV === 'production',
   });
+}
+
+export async function rotateSession(
+  request: Request,
+  response: Response,
+  userId: string,
+  authenticatedWith: AuthMethod = 'password',
+): Promise<void> {
+  await deleteSession(readSessionToken(request));
+  await createSession(userId, response, authenticatedWith);
 }
 
 export async function deleteSession(token: string | undefined): Promise<void> {

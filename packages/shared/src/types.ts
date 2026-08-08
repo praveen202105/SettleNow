@@ -1,5 +1,6 @@
 import type {
   AUDIT_ACTIONS,
+  AUTH_METHODS,
   EXPORT_STATUSES,
   ORDER_SORT_FIELDS,
   ORDER_STATUSES,
@@ -10,13 +11,34 @@ export type OrderStatus = (typeof ORDER_STATUSES)[number];
 export type OrderSortField = (typeof ORDER_SORT_FIELDS)[number];
 export type SortDirection = (typeof SORT_DIRECTIONS)[number];
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
+export type AuthMethod = (typeof AUTH_METHODS)[number];
 export type ExportStatus = (typeof EXPORT_STATUSES)[number];
 
 export interface UserResponse {
+  authMethods: AuthMethod[];
   createdAt: string;
   displayName: string;
   email: string;
   id: string;
+}
+
+export interface AuthConfigResponse {
+  providers: {
+    google: boolean;
+    password: true;
+  };
+}
+
+export interface GoogleAuthorizationResponse {
+  authorizationUrl: string;
+}
+
+export interface CustomerResponse {
+  createdAt: string;
+  id: string;
+  mobile: string;
+  name: string;
+  updatedAt: string;
 }
 
 export interface LineItemResponse {
@@ -40,6 +62,8 @@ export interface OrderResponse {
   amountPaidCents: number;
   createdAt: string;
   customer: string;
+  customerId: string | null;
+  customerMobile: string | null;
   dueDate: string;
   id: string;
   isLocked: boolean;

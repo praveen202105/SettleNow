@@ -2,6 +2,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Building2, ChevronLeft, FileText, Plus, Trash2 } from 'lucide-react';
 import { useFieldArray, useForm } from 'react-hook-form';
+import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { z } from 'zod';
@@ -12,6 +13,7 @@ import {
   isIsoDate,
   orderInputSchema,
   parseMoneyToCents,
+  type CustomerResponse,
   type OrderInput,
   type OrderResponse,
 } from '@settleflow/shared';
@@ -33,6 +35,7 @@ import { PageHeader } from '../../components/ui/PageHeader';
 import { Spinner } from '../../components/ui/Spinner';
 import { ApiClientError } from '../../lib/api';
 import { queryClient } from '../../lib/query';
+import { CustomerCombobox } from '../customers/CustomerCombobox';
 import { orderKeys, ordersApi } from './api';
 
 const moneyInputSchema = z
@@ -49,7 +52,7 @@ const moneyInputSchema = z
   }, 'Enter a valid amount with up to two decimals.');
 
 const orderFormSchema = z.object({
-  customer: z.string().trim().min(1, 'Customer name is required.').max(160),
+  customerId: z.string().uuid('Select a customer.'),
   dueDate: z.string().min(1, 'Due date is required.').refine(isIsoDate, 'Enter a valid due date.'),
   lineItems: z
     .array(
@@ -67,13 +70,13 @@ type OrderFormValues = z.infer<typeof orderFormSchema>;
 function defaults(order?: OrderResponse): OrderFormValues {
   if (!order) {
     return {
-      customer: '',
+      customerId: '',
       dueDate: '',
       lineItems: [{ description: '', quantity: 1, unitPrice: '0.00' }],
     };
   }
   return {
-    customer: order.customer,
+    customerId: order.customerId ?? '',
     dueDate: order.dueDate,
     lineItems: order.lineItems.map((item) => ({
       description: item.description,
@@ -128,12 +131,24 @@ function OrderForm({ mode, order }: { mode: 'create' | 'edit'; order: OrderRespo
     register,
     handleSubmit,
     watch,
+    setValue,
     formState: { errors },
   } = useForm<OrderFormValues>({
     resolver: zodResolver(orderFormSchema),
     defaultValues: defaults(order),
   });
   const lines = useFieldArray({ control, name: 'lineItems' });
+  const [selectedCustomer, setSelectedCustomer] = useState<CustomerResponse | null>(() =>
+    order?.customerId && order.customerMobile
+      ? {
+          createdAt: order.createdAt,
+          id: order.customerId,
+          mobile: order.customerMobile,
+          name: order.customer,
+          updatedAt: order.updatedAt,
+        }
+      : null,
+  );
   const watchedLines = watch('lineItems');
   const cancelHref = order ? `/orders/${order.id}` : '/orders';
 
@@ -159,7 +174,7 @@ function OrderForm({ mode, order }: { mode: 'create' | 'edit'; order: OrderRespo
   const submit = (values: OrderFormValues) => {
     mutation.mutate(
       orderInputSchema.parse({
-        customer: values.customer,
+        customerId: values.customerId,
         dueDate: values.dueDate,
         lineItems: values.lineItems.map((item) => ({
           description: item.description,
@@ -212,22 +227,33 @@ function OrderForm({ mode, order }: { mode: 'create' | 'edit'; order: OrderRespo
               </span>
               <div>
                 <CardTitle>Customer details</CardTitle>
-                <CardDescription>Who is this order for and when is payment due?</CardDescription>
+                <CardDescription>
+                  Select a saved customer and choose when payment is due.
+                </CardDescription>
               </div>
             </div>
           </CardHeader>
           <CardContent className="grid gap-5 pt-5 sm:grid-cols-2 sm:pt-6">
             <Field>
-              <FieldLabel htmlFor="customer">Customer name</FieldLabel>
-              <Input
-                id="customer"
-                autoComplete="organization"
-                placeholder="Acme Corporation"
-                aria-invalid={Boolean(errors.customer)}
-                aria-describedby={errors.customer ? 'customer-error' : undefined}
-                {...register('customer')}
+              <FieldLabel>Customer</FieldLabel>
+              <input type="hidden" {...register('customerId')} />
+              <CustomerCombobox
+                value={selectedCustomer}
+                invalid={Boolean(errors.customerId)}
+                onValueChange={(customer) => {
+                  setSelectedCustomer(customer);
+                  setValue('customerId', customer.id, {
+                    shouldDirty: true,
+                    shouldValidate: true,
+                  });
+                }}
               />
-              <FieldError id="customer-error">{errors.customer?.message}</FieldError>
+              {order && !order.customerId ? (
+                <p className="text-xs leading-5 text-amber-700">
+                  Legacy customer: {order.customer}. Select or add a saved customer before updating.
+                </p>
+              ) : null}
+              <FieldError id="customer-error">{errors.customerId?.message}</FieldError>
             </Field>
             <Field>
               <FieldLabel htmlFor="dueDate">Due date</FieldLabel>
@@ -263,7 +289,7 @@ function OrderForm({ mode, order }: { mode: 'create' | 'edit'; order: OrderRespo
             </Button>
           </CardHeader>
           <CardContent className="pt-5 sm:pt-6">
-            <div className="hidden grid-cols-[minmax(220px,1fr)_90px_150px_120px_44px] gap-3 px-1 pb-2 text-xs font-semibold uppercase tracking-wide text-slate-400 sm:grid">
+            <div className="hidden grid-cols-[minmax(220px,1fr)_90px_150px_120px_44px] gap-3 px-1 pb-2 text-xs font-semibold uppercase tracking-wide text-slate-400 lg:grid">
               <span>Description</span>
               <span>Qty</span>
               <span>Unit price</span>
@@ -282,10 +308,10 @@ function OrderForm({ mode, order }: { mode: 'create' | 'edit'; order: OrderRespo
                 return (
                   <div
                     key={field.id}
-                    className="grid gap-4 rounded-xl border border-slate-200 bg-slate-50/60 p-4 sm:grid-cols-[minmax(220px,1fr)_90px_150px_120px_44px] sm:items-start sm:border-0 sm:bg-transparent sm:p-0"
+                    className="grid gap-4 rounded-xl border border-slate-200 bg-slate-50/60 p-4 lg:grid-cols-[minmax(220px,1fr)_90px_150px_120px_44px] lg:items-start lg:border-0 lg:bg-transparent lg:p-0"
                   >
                     <Field>
-                      <FieldLabel className="sm:sr-only" htmlFor={`line-${index}-description`}>
+                      <FieldLabel className="lg:sr-only" htmlFor={`line-${index}-description`}>
                         Description
                       </FieldLabel>
                       <Input
@@ -304,7 +330,7 @@ function OrderForm({ mode, order }: { mode: 'create' | 'edit'; order: OrderRespo
                       </FieldError>
                     </Field>
                     <Field>
-                      <FieldLabel className="sm:sr-only" htmlFor={`line-${index}-quantity`}>
+                      <FieldLabel className="lg:sr-only" htmlFor={`line-${index}-quantity`}>
                         Quantity
                       </FieldLabel>
                       <Input
@@ -326,7 +352,7 @@ function OrderForm({ mode, order }: { mode: 'create' | 'edit'; order: OrderRespo
                       </FieldError>
                     </Field>
                     <Field>
-                      <FieldLabel className="sm:sr-only" htmlFor={`line-${index}-price`}>
+                      <FieldLabel className="lg:sr-only" htmlFor={`line-${index}-price`}>
                         Unit price
                       </FieldLabel>
                       <InputGroup>
@@ -347,8 +373,8 @@ function OrderForm({ mode, order }: { mode: 'create' | 'edit'; order: OrderRespo
                         {errors.lineItems?.[index]?.unitPrice?.message}
                       </FieldError>
                     </Field>
-                    <div className="flex min-h-11 items-center justify-between sm:justify-end">
-                      <span className="text-xs font-medium text-slate-400 sm:hidden">
+                    <div className="flex min-h-11 items-center justify-between lg:justify-end">
+                      <span className="text-xs font-medium text-slate-400 lg:hidden">
                         Line total
                       </span>
                       <span className="text-sm font-semibold text-slate-900 tabular-nums">

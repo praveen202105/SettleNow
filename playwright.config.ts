@@ -6,6 +6,7 @@ const databaseUrl =
 const apiPort = Number(process.env.TEST_API_PORT ?? 3000);
 const workerPort = Number(process.env.TEST_WORKER_PORT ?? 3001);
 const webPort = Number(process.env.TEST_WEB_PORT ?? 5173);
+const googlePort = Number(process.env.TEST_GOOGLE_PORT ?? 4010);
 const webOrigin = `http://127.0.0.1:${webPort}`;
 
 export default defineConfig({
@@ -21,7 +22,14 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: 'pnpm --filter @settleflow/api dev',
+      command: 'pnpm --filter @settleflow/api exec tsx ../../tests/fixtures/google-oidc-server.ts',
+      env: { TEST_GOOGLE_PORT: String(googlePort) },
+      port: googlePort,
+      reuseExistingServer: !process.env.CI,
+      timeout: 120_000,
+    },
+    {
+      command: 'pnpm --filter @settleflow/api exec tsx src/server.ts',
       env: {
         APP_ORIGIN: webOrigin,
         DATABASE_URL: databaseUrl,
@@ -32,13 +40,17 @@ export default defineConfig({
         STORAGE_DRIVER: 'local',
         STORAGE_LOCAL_PATH: '.local/e2e-exports',
         EMAIL_ENABLED: 'false',
+        GOOGLE_AUTH_ENABLED: 'true',
+        GOOGLE_CLIENT_ID: 'settleflow-e2e-client',
+        GOOGLE_CLIENT_SECRET: 'settleflow-e2e-secret',
+        GOOGLE_OIDC_ISSUER: `http://127.0.0.1:${googlePort}`,
       },
       port: apiPort,
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,
     },
     {
-      command: 'pnpm --filter @settleflow/api dev:worker',
+      command: 'pnpm --filter @settleflow/api exec tsx src/worker.ts',
       env: {
         APP_ORIGIN: webOrigin,
         DATABASE_URL: databaseUrl,

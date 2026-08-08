@@ -40,16 +40,19 @@ async function main(): Promise<void> {
   });
 
   await prisma.order.deleteMany({ where: { userId: user.id } });
+  await prisma.customer.deleteMany({ where: { userId: user.id } });
 
   const samples = [
     {
       customer: 'Acme Corporation',
+      mobile: '+919000000001',
       dueDate: dateFromToday(7),
       items: [{ description: 'Widget Pro License', quantity: 2, unitPriceCents: 50_000 }],
       payments: [{ amountCents: 40_000, date: dateFromToday(-1), note: 'First installment' }],
     },
     {
       customer: 'Globex Industries',
+      mobile: '+919000000002',
       dueDate: dateFromToday(-10),
       items: [
         { description: 'Annual Support Plan', quantity: 1, unitPriceCents: 120_000 },
@@ -59,12 +62,14 @@ async function main(): Promise<void> {
     },
     {
       customer: 'Initech LLC',
+      mobile: '+919000000003',
       dueDate: dateFromToday(14),
       items: [{ description: 'Cloud Storage (TB)', quantity: 5, unitPriceCents: 8_000 }],
       payments: [{ amountCents: 40_000, date: dateFromToday(-3), note: null }],
     },
     {
       customer: 'Umbrella Corp',
+      mobile: '+919000000004',
       dueDate: dateFromToday(-30),
       items: [{ description: 'Enterprise License', quantity: 3, unitPriceCents: 75_000 }],
       payments: [
@@ -74,6 +79,7 @@ async function main(): Promise<void> {
     },
     {
       customer: 'Stark Enterprises',
+      mobile: '+919000000005',
       dueDate: dateFromToday(30),
       items: [{ description: 'API Access Tier 3', quantity: 1, unitPriceCents: 59_900 }],
       payments: [],
@@ -81,9 +87,14 @@ async function main(): Promise<void> {
   ];
 
   for (const sample of samples) {
+    const customer = await prisma.customer.create({
+      data: { mobile: sample.mobile, name: sample.customer, userId: user.id },
+    });
     await prisma.order.create({
       data: {
         customer: sample.customer,
+        customerId: customer.id,
+        customerMobile: customer.mobile,
         dueDate: sample.dueDate,
         userId: user.id,
         lineItems: {

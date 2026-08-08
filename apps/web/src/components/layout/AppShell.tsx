@@ -1,12 +1,12 @@
 import { useMutation } from '@tanstack/react-query';
 import {
   Activity,
-  CreditCard,
   FileSpreadsheet,
   LayoutDashboard,
   LogOut,
   Menu,
   PlusCircle,
+  Settings,
 } from 'lucide-react';
 import { useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
@@ -15,6 +15,7 @@ import { authApi } from '../../features/auth/api';
 import { authQueryKey, useCurrentUser } from '../../features/auth/hooks';
 import { cn } from '../../lib/cn';
 import { queryClient } from '../../lib/query';
+import { BrandMark } from '../brand/BrandMark';
 import { Button } from '../ui/Button';
 import { IconButton } from '../ui/IconButton';
 import { Sheet } from '../ui/Sheet';
@@ -22,9 +23,7 @@ import { Sheet } from '../ui/Sheet';
 function Brand() {
   return (
     <div className="flex items-center gap-3">
-      <span className="flex size-9 items-center justify-center rounded-xl bg-blue-600 text-white shadow-sm">
-        <CreditCard className="size-[18px]" aria-hidden="true" />
-      </span>
+      <BrandMark className="size-9" />
       <div>
         <span className="block text-base font-bold tracking-tight text-slate-950">SettleFlow</span>
         <span className="block text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">
@@ -40,6 +39,7 @@ const navItems = [
   { href: '/orders/new', label: 'New Order', icon: PlusCircle, end: false },
   { href: '/activity', label: 'Activity', icon: Activity, end: false },
   { href: '/exports', label: 'Exports', icon: FileSpreadsheet, end: false },
+  { href: '/settings/security', label: 'Security', icon: Settings, end: false },
 ];
 
 function SidebarContent({ close }: { close?: () => void }) {

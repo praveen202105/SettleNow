@@ -3,7 +3,6 @@ import { useMutation } from '@tanstack/react-query';
 import {
   ArrowRight,
   CheckCircle2,
-  CreditCard,
   LockKeyhole,
   Mail,
   ShieldCheck,
@@ -12,7 +11,7 @@ import {
 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useForm } from 'react-hook-form';
-import { Link, Navigate, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 
 import {
   loginSchema,
@@ -23,6 +22,7 @@ import {
 } from '@settleflow/shared';
 
 import { Alert } from '../../components/ui/Alert';
+import { BrandMark } from '../../components/brand/BrandMark';
 import { Button } from '../../components/ui/Button';
 import { Field, FieldDescription, FieldError, FieldLabel } from '../../components/ui/Field';
 import { InputGroup, InputGroupAddon, InputGroupInput } from '../../components/ui/InputGroup';
@@ -32,7 +32,8 @@ import { cn } from '../../lib/cn';
 import { ApiClientError } from '../../lib/api';
 import { queryClient } from '../../lib/query';
 import { authApi } from './api';
-import { authQueryKey, useCurrentUser } from './hooks';
+import { GoogleIcon } from './GoogleIcon';
+import { authQueryKey, useAuthConfig, useCurrentUser } from './hooks';
 
 type AuthMode = 'login' | 'signup';
 
@@ -45,14 +46,7 @@ export function AuthPage({ mode }: { mode: AuthMode }) {
 function Brand({ inverse = false }: { inverse?: boolean }) {
   return (
     <div className="inline-flex items-center gap-3">
-      <span
-        className={cn(
-          'flex size-11 items-center justify-center rounded-xl shadow-sm',
-          inverse ? 'bg-white/15 text-white ring-1 ring-white/20' : 'bg-blue-600 text-white',
-        )}
-      >
-        <CreditCard className="size-5" aria-hidden="true" />
-      </span>
+      <BrandMark className={cn('size-11', inverse && 'text-white/15 ring-1 ring-white/20')} />
       <span
         className={cn(
           'text-xl font-bold tracking-tight',
@@ -168,6 +162,65 @@ function AuthError({ error }: { error: unknown }) {
   );
 }
 
+const callbackErrorMessages: Record<string, string> = {
+  GOOGLE_ACCESS_DENIED: 'Google sign-in was cancelled. You can try again when ready.',
+  GOOGLE_ALREADY_LINKED: 'A different Google account is already connected.',
+  GOOGLE_ACCOUNT_LINK_REQUIRED:
+    'An account already exists for this email. Sign in with your password, then connect Google from Security settings.',
+  GOOGLE_AUTH_EXPIRED: 'The Google sign-in request expired or was already used. Please try again.',
+  GOOGLE_AUTH_FAILED: 'Google sign-in could not be completed. Please try again.',
+  GOOGLE_EMAIL_NOT_VERIFIED: 'Use a Google account with a verified email address.',
+  GOOGLE_IDENTITY_IN_USE: 'This Google account is already connected to another account.',
+  GOOGLE_PROFILE_INVALID: 'Google did not return a usable account profile.',
+};
+
+function GoogleAccess() {
+  const config = useAuthConfig();
+  const [searchParams] = useSearchParams();
+  const callbackError = searchParams.get('authError');
+  const mutation = useMutation({
+    mutationFn: () => authApi.startGoogle({ intent: 'signin', returnTo: '/orders' }),
+    onSuccess: ({ authorizationUrl }) => window.location.assign(authorizationUrl),
+  });
+
+  return (
+    <>
+      {callbackError ? (
+        <Alert variant="danger" className="mb-5">
+          {callbackErrorMessages[callbackError] ??
+            'Google sign-in could not be completed. Please try again.'}
+        </Alert>
+      ) : null}
+      <AuthError error={mutation.error} />
+      {config.data?.providers.google ? (
+        <>
+          <Button
+            type="button"
+            variant="outline"
+            size="lg"
+            className="w-full bg-white"
+            disabled={mutation.isPending}
+            onClick={() => mutation.mutate()}
+          >
+            {mutation.isPending ? (
+              <Spinner label="Opening Google…" />
+            ) : (
+              <>
+                <GoogleIcon className="size-[18px]" /> Continue with Google
+              </>
+            )}
+          </Button>
+          <div className="my-5 flex items-center gap-3" aria-hidden="true">
+            <span className="h-px flex-1 bg-slate-200" />
+            <span className="text-xs font-medium uppercase tracking-wider text-slate-400">or</span>
+            <span className="h-px flex-1 bg-slate-200" />
+          </div>
+        </>
+      ) : null}
+    </>
+  );
+}
+
 function useAuthSuccess() {
   const navigate = useNavigate();
   return (user: UserResponse) => {
@@ -190,6 +243,7 @@ function LoginForm() {
 
   return (
     <AuthShell mode="login">
+      <GoogleAccess />
       <AuthError error={mutation.error} />
       <form
         className="grid gap-4"
@@ -255,6 +309,7 @@ function SignupForm() {
 
   return (
     <AuthShell mode="signup">
+      <GoogleAccess />
       <AuthError error={mutation.error} />
       <form
         className="grid gap-4"

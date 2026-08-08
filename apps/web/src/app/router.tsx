@@ -30,6 +30,11 @@ const OrderFormPage = lazy(() =>
 const OrdersPage = lazy(() =>
   import('../features/orders/OrdersPage').then((module) => ({ default: module.OrdersPage })),
 );
+const SecurityPage = lazy(() =>
+  import('../features/settings/SecurityPage').then((module) => ({
+    default: module.SecurityPage,
+  })),
+);
 
 function RouteSuspense({ children }: { children: ReactNode }) {
   return (
@@ -152,6 +157,14 @@ export const router = createBrowserRouter([
         element: (
           <RouteSuspense>
             <OrderFormPage mode="edit" />
+          </RouteSuspense>
+        ),
+      },
+      {
+        path: '/settings/security',
+        element: (
+          <RouteSuspense>
+            <SecurityPage />
           </RouteSuspense>
         ),
       },

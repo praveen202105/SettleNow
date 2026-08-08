@@ -394,7 +394,14 @@ function DesktopTable({
                   {order.orderNumber}
                 </Link>
               </td>
-              <td className="px-5 py-4 font-semibold text-slate-800">{order.customer}</td>
+              <td className="px-5 py-4">
+                <span className="block font-semibold text-slate-800">{order.customer}</span>
+                {order.customerMobile ? (
+                  <span className="mt-0.5 block text-xs text-slate-500">
+                    {order.customerMobile}
+                  </span>
+                ) : null}
+              </td>
               <td className="whitespace-nowrap px-5 py-4 text-slate-500">
                 {formatDate(order.dueDate)}
               </td>
@@ -488,6 +495,9 @@ function MobileCards({
                 {order.orderNumber}
               </Link>
               <h3 className="mt-1 truncate font-semibold text-slate-900">{order.customer}</h3>
+              {order.customerMobile ? (
+                <p className="mt-0.5 truncate text-xs text-slate-500">{order.customerMobile}</p>
+              ) : null}
             </div>
             <StatusBadge status={order.status} />
           </div>

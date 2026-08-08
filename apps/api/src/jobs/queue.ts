@@ -10,7 +10,8 @@ export type SettleFlowJobName =
   | 'maintenance.overdue-scan'
   | 'notification.export-ready'
   | 'notification.order-overdue'
-  | 'notification.payment-recorded';
+  | 'notification.payment-recorded'
+  | 'notification.user-welcome';
 
 export interface SettleFlowJobData {
   exportId?: string;

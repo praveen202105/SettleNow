@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
   DEFAULT_PAGE_SIZE,
   AUDIT_ACTIONS,
+  GOOGLE_AUTH_INTENTS,
   MAX_LINE_ITEMS,
   MAX_MONEY_CENTS,
   MAX_PAGE_SIZE,
@@ -11,6 +12,7 @@ import {
   SORT_DIRECTIONS,
 } from './constants.js';
 import { isIsoDate } from './date.js';
+import { normalizeE164Phone } from './phone.js';
 
 const isoDateSchema = z
   .string()
@@ -31,6 +33,37 @@ export const loginSchema = z.object({
   password: z.string().min(1).max(128),
 });
 
+export const googleAuthStartSchema = z.object({
+  intent: z.enum(GOOGLE_AUTH_INTENTS).default('signin'),
+  returnTo: z.string().trim().max(300).optional(),
+});
+
+export const e164PhoneSchema = z
+  .string()
+  .trim()
+  .transform((value, context) => {
+    const normalized = normalizeE164Phone(value);
+    if (!normalized) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Use international format with country code, for example +919876543210.',
+      });
+      return z.NEVER;
+    }
+    return normalized;
+  });
+
+export const customerInputSchema = z.object({
+  mobile: e164PhoneSchema,
+  name: z.string().trim().min(1, 'Customer name is required.').max(160),
+});
+
+export const customerListQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(MAX_PAGE_SIZE).default(20),
+  search: z.string().trim().max(100).optional(),
+});
+
 export const lineItemInputSchema = z
   .object({
     description: z.string().trim().min(1, 'Description is required.').max(200),
@@ -49,7 +82,7 @@ export const lineItemInputSchema = z
 
 export const orderInputSchema = z
   .object({
-    customer: z.string().trim().min(1, 'Customer name is required.').max(160),
+    customerId: z.string().uuid('Select a valid customer.'),
     dueDate: isoDateSchema,
     lineItems: z.array(lineItemInputSchema).min(1).max(MAX_LINE_ITEMS),
   })
@@ -103,6 +136,9 @@ export const exportListQuerySchema = z.object({
 
 export type SignupInput = z.infer<typeof signupSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
+export type GoogleAuthStartInput = z.infer<typeof googleAuthStartSchema>;
+export type CustomerInput = z.infer<typeof customerInputSchema>;
+export type CustomerListQuery = z.infer<typeof customerListQuerySchema>;
 export type LineItemInput = z.infer<typeof lineItemInputSchema>;
 export type OrderInput = z.infer<typeof orderInputSchema>;
 export type PaymentInput = z.infer<typeof paymentInputSchema>;

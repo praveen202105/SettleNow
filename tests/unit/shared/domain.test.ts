@@ -27,7 +27,7 @@ describe('calculateOrderFinancials', () => {
 describe('order validation', () => {
   it('rejects totals above the supported cents range', () => {
     const result = orderInputSchema.safeParse({
-      customer: 'Acme',
+      customerId: '00000000-0000-4000-8000-000000000001',
       dueDate: '2030-01-01',
       lineItems: [
         { description: 'Large contract', quantity: 2, unitPriceCents: 9_000_000_000_000 },

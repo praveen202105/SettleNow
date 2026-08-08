@@ -26,6 +26,14 @@ const envSchema = z
     DATABASE_URL: z.string().min(1),
     EMAIL_ENABLED: booleanFromString.default(false),
     EMAIL_FROM: optionalString,
+    GMAIL_API_CLIENT_ID: optionalString,
+    GMAIL_API_CLIENT_SECRET: optionalString,
+    GMAIL_API_REFRESH_TOKEN: optionalString,
+    GMAIL_API_SENDER: z.string().email().optional(),
+    GOOGLE_AUTH_ENABLED: booleanFromString.default(false),
+    GOOGLE_CLIENT_ID: optionalString,
+    GOOGLE_CLIENT_SECRET: optionalString,
+    GOOGLE_OIDC_ISSUER: z.string().url().default('https://accounts.google.com'),
     LOG_LEVEL: z
       .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
       .default('info'),
@@ -35,7 +43,6 @@ const envSchema = z
     READ_AFTER_WRITE_SECONDS: z.coerce.number().int().min(1).max(300).default(10),
     READ_DATABASE_URL: optionalString,
     REDIS_URL: z.string().min(1).default('redis://127.0.0.1:6379'),
-    RESEND_API_KEY: optionalString,
     SESSION_COOKIE_NAME: z.string().min(1).max(64).default('settleflow_session'),
     SESSION_TTL_DAYS: z.coerce.number().int().min(1).max(90).default(7),
     S3_ACCESS_KEY_ID: optionalString,
@@ -52,12 +59,49 @@ const envSchema = z
     RAILWAY_REPLICA_REGION: optionalString,
   })
   .superRefine((value, context) => {
-    if (value.EMAIL_ENABLED && (!value.RESEND_API_KEY || !value.EMAIL_FROM)) {
+    if (value.GOOGLE_AUTH_ENABLED && (!value.GOOGLE_CLIENT_ID || !value.GOOGLE_CLIENT_SECRET)) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
-        message: 'RESEND_API_KEY and EMAIL_FROM are required when EMAIL_ENABLED=true.',
+        message:
+          'GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are required when GOOGLE_AUTH_ENABLED=true.',
+        path: ['GOOGLE_AUTH_ENABLED'],
+      });
+    }
+
+    if (value.NODE_ENV !== 'test' && value.GOOGLE_OIDC_ISSUER !== 'https://accounts.google.com') {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'A custom Google OIDC issuer is allowed only when NODE_ENV=test.',
+        path: ['GOOGLE_OIDC_ISSUER'],
+      });
+    }
+
+    if (
+      value.EMAIL_ENABLED &&
+      (!value.GMAIL_API_CLIENT_ID ||
+        !value.GMAIL_API_CLIENT_SECRET ||
+        !value.GMAIL_API_REFRESH_TOKEN ||
+        !value.GMAIL_API_SENDER ||
+        !value.EMAIL_FROM)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          'GMAIL_API_CLIENT_ID, GMAIL_API_CLIENT_SECRET, GMAIL_API_REFRESH_TOKEN, GMAIL_API_SENDER and EMAIL_FROM are required when EMAIL_ENABLED=true.',
         path: ['EMAIL_ENABLED'],
       });
+    }
+
+    if (value.EMAIL_ENABLED && value.EMAIL_FROM && value.GMAIL_API_SENDER) {
+      const bracketedAddress = value.EMAIL_FROM.match(/<([^<>]+)>\s*$/)?.[1];
+      const fromAddress = (bracketedAddress ?? value.EMAIL_FROM).trim().toLowerCase();
+      if (fromAddress !== value.GMAIL_API_SENDER.toLowerCase()) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'EMAIL_FROM address must match GMAIL_API_SENDER.',
+          path: ['EMAIL_FROM'],
+        });
+      }
     }
 
     if (
