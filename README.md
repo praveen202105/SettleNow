@@ -15,7 +15,7 @@ Production: [https://settleflow-production-77e1.up.railway.app](https://settlefl
 - Filtered dashboards, summary cards, responsive mobile layouts and accessible controls.
 - Asynchronous CSV exports stored in private object storage for 24 hours.
 - Activity history for authentication, customers, orders, payments, exports and notifications.
-- Gmail SMTP notifications for payment, overdue-order and export-ready events.
+- A Gmail SMTP notification pipeline for payment, overdue-order and export-ready events.
 
 ## Architecture
 
@@ -94,7 +94,9 @@ Order/payment changes and their outbox records commit in the same PostgreSQL tra
 
 Notification deliveries are uniquely keyed per domain event. Nodemailer sends through Gmail SMTP, records the SMTP message ID and uses a deterministic opaque RFC Message-ID for retry deduplication. Notifications go to the SettleFlow account owner, not to the customer mobile number.
 
-Production email is enabled only on the worker. Setting `EMAIL_ENABLED=false` disables delivery and records new events as skipped. SMTP availability does not make worker readiness fail; a send failure is recorded and retried by BullMQ.
+Email configuration belongs only to the worker. Setting `EMAIL_ENABLED=false` disables delivery and records new events as skipped. SMTP availability does not make worker readiness fail; a send failure is recorded and retried by BullMQ.
+
+Railway allows outbound SMTP only on Pro plans and above. The current deployment therefore keeps `EMAIL_ENABLED=false` while retaining the Gmail App Password as a sealed worker-only variable. After a Railway Pro upgrade, redeploy the worker before enabling delivery. See [Railway outbound networking](https://docs.railway.com/networking/outbound-networking).
 
 ## Local development
 
@@ -269,7 +271,7 @@ The production Gmail rollout uses this sequence:
 2. Verify API and worker readiness plus customer create/reuse behavior.
 3. Remove obsolete email-provider variables.
 4. Add sealed Gmail SMTP variables to the worker only; never add the App Password to source control.
-5. Enable email and verify an export-ready notification and authenticated download.
+5. On Railway Pro or above, redeploy the worker, enable email and verify an export-ready notification and authenticated download. On lower plans, keep email disabled and use an approved HTTPS email provider instead.
 
 The production Google callback is:
 
