@@ -2,7 +2,7 @@
 
 SettleFlow is a production-oriented B2B order and settlement workspace. Teams can save customers once, create itemized orders, record partial payments, track overdue balances, export filtered CSV reports and review an immutable activity trail.
 
-Production: [https://web-api-production-af27.up.railway.app](https://web-api-production-af27.up.railway.app)
+Production: [https://settleflow-production-77e1.up.railway.app](https://settleflow-production-77e1.up.railway.app)
 
 ## Product capabilities
 
@@ -27,8 +27,8 @@ Browser
   ▼
 Railway Edge
   │
-  ├── web-api replica 1 ─┐
-  └── web-api replica 2 ─┤
+  ├── settleflow replica 1 ─┐
+  └── settleflow replica 2 ─┤
                          ├── PostgreSQL primary
                          │     ├── users / auth identities
                          │     ├── customers / orders / payments
@@ -94,7 +94,7 @@ Order/payment changes and their outbox records commit in the same PostgreSQL tra
 
 Notification deliveries are uniquely keyed per domain event. Nodemailer sends through Gmail SMTP, records the SMTP message ID and uses a deterministic opaque RFC Message-ID for retry deduplication. Notifications go to the SettleFlow account owner, not to the customer mobile number.
 
-Email remains disabled when `EMAIL_ENABLED=false`. Disabled events are recorded as skipped. SMTP availability does not make worker readiness fail; a send failure is recorded and retried by BullMQ.
+Production email is enabled only on the worker. Setting `EMAIL_ENABLED=false` disables delivery and records new events as skipped. SMTP availability does not make worker readiness fail; a send failure is recorded and retried by BullMQ.
 
 ## Local development
 
@@ -257,24 +257,24 @@ pnpm test:e2e
 
 The production project uses one Singapore region:
 
-- `web-api`: two replicas serving React and `/api/v1`.
+- `settleflow`: two replicas serving React and `/api/v1` at the branded Railway origin.
 - `worker`: one private replica processing outbox, BullMQ, exports and email.
 - PostgreSQL primary, Redis and a private S3-compatible bucket.
 
 The API pre-deploy command is `pnpm db:deploy`, ensuring migrations run once before the two replicas start. The API starts with `pnpm start:prod`; the worker starts with `pnpm start:worker`.
 
-Deploy SMTP migration safely:
+The production Gmail rollout uses this sequence:
 
 1. Deploy code and database migration with `EMAIL_ENABLED=false`.
 2. Verify API and worker readiness plus customer create/reuse behavior.
 3. Remove obsolete email-provider variables.
-4. Add sealed Gmail SMTP variables to the worker only.
-5. Enable email and trigger a payment/export smoke test only after a valid App Password is available.
+4. Add sealed Gmail SMTP variables to the worker only; never add the App Password to source control.
+5. Enable email and verify an export-ready notification and authenticated download.
 
 The production Google callback is:
 
 ```text
-https://web-api-production-af27.up.railway.app/api/v1/auth/google/callback
+https://settleflow-production-77e1.up.railway.app/api/v1/auth/google/callback
 ```
 
 ## Troubleshooting
