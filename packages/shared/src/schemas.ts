@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
   DEFAULT_PAGE_SIZE,
   AUDIT_ACTIONS,
+  GOOGLE_AUTH_INTENTS,
   MAX_LINE_ITEMS,
   MAX_MONEY_CENTS,
   MAX_PAGE_SIZE,
@@ -29,6 +30,11 @@ export const signupSchema = z.object({
 export const loginSchema = z.object({
   email: emailSchema,
   password: z.string().min(1).max(128),
+});
+
+export const googleAuthStartSchema = z.object({
+  intent: z.enum(GOOGLE_AUTH_INTENTS).default('signin'),
+  returnTo: z.string().trim().max(300).optional(),
 });
 
 export const lineItemInputSchema = z
@@ -103,6 +109,7 @@ export const exportListQuerySchema = z.object({
 
 export type SignupInput = z.infer<typeof signupSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
+export type GoogleAuthStartInput = z.infer<typeof googleAuthStartSchema>;
 export type LineItemInput = z.infer<typeof lineItemInputSchema>;
 export type OrderInput = z.infer<typeof orderInputSchema>;
 export type PaymentInput = z.infer<typeof paymentInputSchema>;

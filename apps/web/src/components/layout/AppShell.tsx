@@ -7,6 +7,7 @@ import {
   LogOut,
   Menu,
   PlusCircle,
+  Settings,
 } from 'lucide-react';
 import { useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
@@ -40,6 +41,7 @@ const navItems = [
   { href: '/orders/new', label: 'New Order', icon: PlusCircle, end: false },
   { href: '/activity', label: 'Activity', icon: Activity, end: false },
   { href: '/exports', label: 'Exports', icon: FileSpreadsheet, end: false },
+  { href: '/settings/security', label: 'Security', icon: Settings, end: false },
 ];
 
 function SidebarContent({ close }: { close?: () => void }) {

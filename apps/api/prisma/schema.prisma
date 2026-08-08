@@ -11,15 +11,32 @@ model User {
   id                     String                 @id @default(uuid())
   email                  String                 @unique
   displayName            String                 @map("display_name")
-  passwordHash           String                 @map("password_hash")
+  passwordHash           String?                @map("password_hash")
   createdAt              DateTime               @default(now()) @map("created_at")
   updatedAt              DateTime               @updatedAt @map("updated_at")
+  authIdentities         AuthIdentity[]
   orders                 Order[]
   auditEvents            AuditEvent[]
   exportJobs             ExportJob[]
   notificationDeliveries NotificationDelivery[]
 
   @@map("users")
+}
+
+model AuthIdentity {
+  id                String   @id @default(uuid())
+  provider          String
+  providerAccountId String   @map("provider_account_id")
+  providerEmail     String   @map("provider_email")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+  userId            String   @map("user_id")
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@unique([userId, provider])
+  @@index([providerEmail])
+  @@map("auth_identities")
 }
 
 model Order {

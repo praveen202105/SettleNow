@@ -4,12 +4,38 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { OrderResponse } from '@settleflow/shared';
 
 import { createApp } from '../../../apps/api/src/app.js';
+import type {
+  GoogleAuthorizationInput,
+  GoogleCallbackInput,
+  GoogleOidcClient,
+  GoogleProfile,
+} from '../../../apps/api/src/auth/google.js';
 import { processOrderExport } from '../../../apps/api/src/jobs/exportProcessor.js';
 import { notifyPaymentRecorded } from '../../../apps/api/src/jobs/notificationProcessor.js';
 import { prisma } from '../../../apps/api/src/lib/prisma.js';
 import { disconnectRedis, redis } from '../../../apps/api/src/lib/redis.js';
 
 const app = createApp();
+
+class FakeGoogleOidcClient implements GoogleOidcClient {
+  profiles = new Map<string, GoogleProfile>();
+
+  async createAuthorizationUrl(input: GoogleAuthorizationInput): Promise<string> {
+    const url = new URL('https://accounts.google.test/authorize');
+    url.searchParams.set('state', input.state);
+    return Promise.resolve(url.toString());
+  }
+
+  async exchangeCallback(input: GoogleCallbackInput): Promise<GoogleProfile> {
+    const code = input.callbackUrl.searchParams.get('code') ?? '';
+    const profile = this.profiles.get(code);
+    if (!profile) throw new Error('Unknown fake authorization code');
+    return Promise.resolve(profile);
+  }
+}
+
+const fakeGoogle = new FakeGoogleOidcClient();
+const googleApp = createApp({ googleEnabled: true, googleOidcClient: fakeGoogle });
 type TestAgent = ReturnType<typeof request.agent>;
 
 const validOrder = {
@@ -30,12 +56,40 @@ function createOrder(agent: TestAgent, overrides: Record<string, unknown> = {}) 
   return agent.post('/api/v1/orders').send({ ...validOrder, ...overrides });
 }
 
+async function startGoogle(
+  agent: TestAgent,
+  intent: 'signin' | 'link' = 'signin',
+  returnTo = intent === 'link' ? '/settings/security?google=linked' : '/orders',
+) {
+  const response = await agent
+    .post('/api/v1/auth/google/start')
+    .set(
+      'referer',
+      intent === 'link' ? 'http://localhost:5173/settings/security' : 'http://localhost:5173/login',
+    )
+    .send({ intent, returnTo });
+  expect(response.status).toBe(200);
+  const authorizationUrl = new URL(response.body.data.authorizationUrl as string);
+  return authorizationUrl.searchParams.get('state')!;
+}
+
+async function finishGoogle(
+  agent: TestAgent,
+  state: string,
+  profile: GoogleProfile,
+  code = `code-${Date.now()}-${Math.random()}`,
+) {
+  fakeGoogle.profiles.set(code, profile);
+  return agent.get('/api/v1/auth/google/callback').query({ code, state });
+}
+
 beforeAll(async () => {
   await prisma.$connect();
 });
 
 beforeEach(async () => {
   await prisma.user.deleteMany();
+  fakeGoogle.profiles.clear();
   const keys = await redis.keys('settleflow:*');
   if (keys.length > 0) await redis.del(...keys);
 });
@@ -82,6 +136,138 @@ describe('authentication', () => {
     expect(invalid.status).toBe(422);
     expect(invalid.body.error).toMatchObject({ code: 'VALIDATION_ERROR' });
     expect(invalid.body.error.fieldErrors).toBeTypeOf('object');
+  });
+
+  it('creates and returns a Google-only user through a single-use OAuth state', async () => {
+    const agent = request.agent(googleApp);
+    expect((await request(app).get('/api/v1/auth/config')).body.data.providers.google).toBe(false);
+    expect((await request(googleApp).get('/api/v1/auth/config')).body.data.providers.google).toBe(
+      true,
+    );
+
+    const profile = {
+      displayName: 'Google User',
+      email: 'google@example.com',
+      emailVerified: true,
+      subject: 'google-subject-1',
+    };
+    const state = await startGoogle(agent);
+    const callback = await finishGoogle(agent, state, profile, 'google-code-1');
+    expect(callback.status).toBe(302);
+    expect(callback.headers.location).toBe('/orders');
+    expect(callback.headers['set-cookie']?.[0]).toContain('HttpOnly');
+
+    const me = await agent.get('/api/v1/auth/me');
+    expect(me.body.data).toMatchObject({
+      authMethods: ['google'],
+      displayName: 'Google User',
+      email: 'google@example.com',
+    });
+    expect((await agent.delete('/api/v1/auth/google/link')).body.error.code).toBe(
+      'LAST_AUTH_METHOD',
+    );
+    const linkWithoutPasswordSession = await agent
+      .post('/api/v1/auth/google/start')
+      .send({ intent: 'link', returnTo: '/settings/security' });
+    expect(linkWithoutPasswordSession.status).toBe(401);
+    expect(linkWithoutPasswordSession.body.error.code).toBe('GOOGLE_PASSWORD_SESSION_REQUIRED');
+
+    const replay = await finishGoogle(agent, state, profile, 'google-code-replay');
+    expect(replay.status).toBe(302);
+    expect(replay.headers.location).toContain('authError=GOOGLE_AUTH_EXPIRED');
+
+    await agent.post('/api/v1/auth/logout');
+    const returningState = await startGoogle(agent);
+    expect((await finishGoogle(agent, returningState, profile, 'google-code-2')).status).toBe(302);
+    expect(await prisma.user.count({ where: { email: profile.email } })).toBe(1);
+  });
+
+  it('requires explicit same-email linking and supports safe connect and disconnect', async () => {
+    const agent = request.agent(googleApp);
+    await signup(agent, 'linked@example.com');
+    await agent.post('/api/v1/auth/logout');
+
+    const profile = {
+      displayName: 'Linked User',
+      email: 'linked@example.com',
+      emailVerified: true,
+      subject: 'google-linked-subject',
+    };
+    const collisionState = await startGoogle(agent);
+    const collision = await finishGoogle(agent, collisionState, profile, 'collision-code');
+    expect(collision.headers.location).toContain('authError=GOOGLE_ACCOUNT_LINK_REQUIRED');
+
+    await agent.post('/api/v1/auth/login').send({
+      email: 'linked@example.com',
+      password: 'SecurePass123!',
+    });
+    const linkState = await startGoogle(agent, 'link');
+    const linked = await finishGoogle(agent, linkState, profile, 'link-code');
+    expect(linked.headers.location).toBe('/settings/security?google=linked');
+    expect((await agent.get('/api/v1/auth/me')).body.data.authMethods).toEqual([
+      'password',
+      'google',
+    ]);
+
+    const unlinked = await agent.delete('/api/v1/auth/google/link');
+    expect(unlinked.status).toBe(200);
+    expect(unlinked.body.data.authMethods).toEqual(['password']);
+    const actions = await prisma.auditEvent.findMany({
+      where: { action: { in: ['auth.google.linked', 'auth.google.unlinked'] } },
+      orderBy: { createdAt: 'asc' },
+    });
+    expect(actions.map((event) => event.action)).toEqual([
+      'auth.google.linked',
+      'auth.google.unlinked',
+    ]);
+  });
+
+  it('rejects mismatched and already-owned Google identities during linking', async () => {
+    const first = request.agent(googleApp);
+    const second = request.agent(googleApp);
+    await signup(first, 'first-link@example.com');
+    await signup(second, 'second-link@example.com');
+
+    const firstState = await startGoogle(first, 'link');
+    await finishGoogle(
+      first,
+      firstState,
+      {
+        displayName: 'First Link',
+        email: 'first-link@example.com',
+        emailVerified: true,
+        subject: 'owned-google-subject',
+      },
+      'first-link-code',
+    );
+
+    const mismatchState = await startGoogle(second, 'link');
+    const mismatch = await finishGoogle(
+      second,
+      mismatchState,
+      {
+        displayName: 'Wrong Account',
+        email: 'wrong@example.com',
+        emailVerified: true,
+        subject: 'different-subject',
+      },
+      'mismatch-code',
+    );
+    expect(mismatch.headers.location).toContain('authError=GOOGLE_EMAIL_MISMATCH');
+
+    const ownedState = await startGoogle(second, 'link');
+    const owned = await finishGoogle(
+      second,
+      ownedState,
+      {
+        displayName: 'Second Link',
+        email: 'second-link@example.com',
+        emailVerified: true,
+        subject: 'owned-google-subject',
+      },
+      'owned-code',
+    );
+    expect(owned.headers.location).toContain('authError=GOOGLE_IDENTITY_IN_USE');
   });
 });
 

@@ -7,7 +7,7 @@ Live application: [https://web-api-production-af27.up.railway.app](https://web-a
 ## Stack and layout
 
 - `apps/web`: React 19, TypeScript, Vite, Tailwind CSS, TanStack Query, React Hook Form, Zod, and an owned shadcn-style component system built on Radix UI.
-- `apps/api`: Express 5, Prisma, PostgreSQL, Redis, BullMQ, private object storage, Resend, Pino, and Zod. The same build provides independent API and worker entrypoints.
+- `apps/api`: Express 5, Prisma, PostgreSQL, Redis, BullMQ, Google OpenID Connect, private object storage, Resend, Pino, and Zod. The same build provides independent API and worker entrypoints.
 - `packages/shared`: shared schemas, API contracts, money/date helpers, and status calculation.
 - `tests/unit`: shared-domain and React component/client unit tests.
 - `tests/integration`: API, authentication, database, and concurrency integration tests.
@@ -42,6 +42,16 @@ pnpm dev
 
 Open `http://localhost:5173`. API requests are proxied to `http://localhost:3000`.
 
+### Google authentication
+
+Password authentication works without additional configuration. To enable Google locally, create a Google Cloud OAuth 2.0 Web application and register:
+
+```text
+http://localhost:5173/api/v1/auth/google/callback
+```
+
+Set `GOOGLE_AUTH_ENABLED=true`, `GOOGLE_CLIENT_ID`, and `GOOGLE_CLIENT_SECRET` in `.env`. The backend runs Authorization Code + PKCE and stores single-use state in Redis. Google tokens are validated server-side, never returned to React, and never persisted. New verified Google emails create Google-only users. If a password account already owns the email, sign in with the password first and connect Google from **Security**; accounts are never auto-merged by email.
+
 To load the five assignment examples for local development only:
 
 ```bash
@@ -69,7 +79,8 @@ Coverage includes money/date behavior, Redis sessions and cache invalidation, au
 
 All endpoints use `/api/v1` and return `{ "data": ... }` (plus optional `meta`) or `{ "error": { "code", "message", "fieldErrors"? } }`.
 
-- `POST /auth/signup`, `POST /auth/login`, `POST /auth/logout`, `GET /auth/me`
+- `GET /auth/config`, `POST /auth/signup`, `POST /auth/login`, `POST /auth/logout`, `GET /auth/me`
+- `POST /auth/google/start`, `GET /auth/google/callback`, `DELETE /auth/google/link`
 - `GET /orders`, `POST /orders`, `GET/PATCH/DELETE /orders/:id`
 - `POST /orders/:id/payments`, `GET /orders/summary`
 - `GET /activity`
@@ -104,7 +115,7 @@ Consequently, a past-due order becomes `paid` after its final payment; `paid` ta
 ## What I would improve before wider production use
 
 - Add a staging environment, automated backup/restore drills and documented PostgreSQL recovery objectives.
-- Add email verification, password reset, session/device management and optional multi-factor authentication.
+- Add password-account email verification, password reset, session/device management and optional multi-factor authentication.
 - Add refunds with an explicit ledger model rather than negative payments.
 - Add error tracking, queue-depth alerts, service-level objectives and longer-term audit retention controls.
 - Add a date-range export filter, since the current CSV export snapshots dashboard search, status and sorting filters.
@@ -112,7 +123,8 @@ Consequently, a past-due order becomes `paid` after its final payment; `paid` ta
 
 ## Security and operations
 
-- Passwords use Argon2id. Session cookies are HttpOnly, Secure in production, SameSite=Lax and revocable. Redis stores only SHA-256 token hashes with TTLs.
+- Passwords use Argon2id. Google authentication uses Authorization Code + PKCE, nonce validation, single-use hashed Redis state and explicit account linking. OAuth authorization codes and tokens are excluded from logs and storage.
+- Session cookies are HttpOnly, Secure in production, SameSite=Lax and revocable. Redis stores only SHA-256 session-token hashes with TTLs, and sessions rotate after authentication-method changes.
 - Authentication rate limits are distributed through Redis. Order lists and summaries use short-lived, user-versioned cache keys with primary read-after-write routing.
 - Audit and outbox records commit with domain writes. BullMQ jobs use stable IDs, retries and idempotent notification deliveries.
 - Helmet, request IDs, origin checks, structured logs, environment validation, centralized errors, dependency readiness checks and graceful shutdown are enabled.
@@ -133,6 +145,9 @@ LOG_LEVEL=info
 SESSION_COOKIE_NAME=settleflow_session
 SESSION_TTL_DAYS=7
 AUTH_RATE_LIMIT_MAX=20
+GOOGLE_AUTH_ENABLED=true
+GOOGLE_CLIENT_ID=<google-oauth-web-client-id>
+GOOGLE_CLIENT_SECRET=<sealed-google-oauth-client-secret>
 STORAGE_DRIVER=s3
 S3_ENDPOINT_URL=<bucket-endpoint>
 S3_REGION=auto
@@ -146,5 +161,13 @@ EMAIL_FROM=SettleFlow <verified@example.com>
 ```
 
 The provider-neutral `S3_*` variables configure Railway's S3-compatible bucket; they do not imply AWS infrastructure. The API uses pre-deploy command `pnpm db:deploy` and start command `pnpm start:prod`. The worker starts with `pnpm start:worker`. Export objects expire after 24 hours and are downloaded only through authenticated, ownership-checked API routes. Set `EMAIL_ENABLED=true` only after configuring a Resend API key and verified `EMAIL_FROM` sender.
+
+For production Google authentication, create the OAuth client under the operational Google Cloud account, use an External consent screen with only `openid`, `email`, and `profile`, and register:
+
+```text
+https://web-api-production-af27.up.railway.app/api/v1/auth/google/callback
+```
+
+Only `web-api` needs the Google client variables; the private worker keeps Google authentication disabled.
 
 Production URL: [https://web-api-production-af27.up.railway.app](https://web-api-production-af27.up.railway.app)

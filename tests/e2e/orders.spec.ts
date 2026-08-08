@@ -27,7 +27,7 @@ test('creates and settles a $1,000 order without allowing overpayment', async ({
   await page.getByLabel('Password', { exact: true }).fill('SecurePass123!');
   await page.getByRole('button', { name: 'Create Account' }).click();
 
-  await expect(page.getByRole('heading', { name: 'Orders' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Orders', exact: true })).toBeVisible();
   await expectNoHorizontalOverflow(page);
   await page
     .getByRole('link', { name: /New Order/ })
@@ -128,4 +128,19 @@ test('authentication fields render cleanly at the minimum supported width', asyn
   const iconBox = await icons.first().boundingBox();
   expect(iconBox?.width).toBeGreaterThanOrEqual(16);
   expect(iconBox?.width).toBeLessThanOrEqual(20);
+});
+
+test('signs in through the complete Google OAuth redirect flow', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/login');
+  await page.getByRole('button', { name: 'Continue with Google' }).click();
+
+  await expect(page).toHaveURL(/\/orders$/);
+  await expect(page.getByRole('heading', { name: 'Orders', exact: true })).toBeVisible();
+  await page.getByRole('link', { name: 'Security' }).click();
+  await expect(page.getByRole('heading', { name: 'Security' })).toBeVisible();
+  await expect(page.getByText('Google', { exact: true })).toBeVisible();
+  await expect(page.getByText(/Google is your only sign-in method/)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Disconnect' })).toBeDisabled();
+  await expectNoHorizontalOverflow(page);
 });

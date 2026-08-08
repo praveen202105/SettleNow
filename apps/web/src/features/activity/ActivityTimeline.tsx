@@ -18,6 +18,8 @@ const actionLabels: Record<AuditAction, string> = {
   'auth.login': 'Signed in',
   'auth.logout': 'Signed out',
   'auth.signup': 'Account created',
+  'auth.google.linked': 'Google connected',
+  'auth.google.unlinked': 'Google disconnected',
   'export.completed': 'Export completed',
   'export.downloaded': 'Export downloaded',
   'export.requested': 'Export requested',
@@ -29,9 +31,15 @@ const actionLabels: Record<AuditAction, string> = {
 };
 
 export function activityLabel(event: AuditEventResponse): string {
+  const providerLabel =
+    event.metadata.provider === 'google' && event.action === 'auth.login'
+      ? 'Signed in with Google'
+      : event.metadata.provider === 'google' && event.action === 'auth.signup'
+        ? 'Google account created'
+        : actionLabels[event.action];
   const orderNumber =
     typeof event.metadata.orderNumber === 'string' ? ` · ${event.metadata.orderNumber}` : '';
-  return `${actionLabels[event.action]}${orderNumber}`;
+  return `${providerLabel}${orderNumber}`;
 }
 
 export function activityTime(value: string): string {

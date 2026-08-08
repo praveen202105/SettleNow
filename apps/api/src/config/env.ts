@@ -26,6 +26,10 @@ const envSchema = z
     DATABASE_URL: z.string().min(1),
     EMAIL_ENABLED: booleanFromString.default(false),
     EMAIL_FROM: optionalString,
+    GOOGLE_AUTH_ENABLED: booleanFromString.default(false),
+    GOOGLE_CLIENT_ID: optionalString,
+    GOOGLE_CLIENT_SECRET: optionalString,
+    GOOGLE_OIDC_ISSUER: z.string().url().default('https://accounts.google.com'),
     LOG_LEVEL: z
       .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
       .default('info'),
@@ -52,6 +56,23 @@ const envSchema = z
     RAILWAY_REPLICA_REGION: optionalString,
   })
   .superRefine((value, context) => {
+    if (value.GOOGLE_AUTH_ENABLED && (!value.GOOGLE_CLIENT_ID || !value.GOOGLE_CLIENT_SECRET)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          'GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are required when GOOGLE_AUTH_ENABLED=true.',
+        path: ['GOOGLE_AUTH_ENABLED'],
+      });
+    }
+
+    if (value.NODE_ENV !== 'test' && value.GOOGLE_OIDC_ISSUER !== 'https://accounts.google.com') {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'A custom Google OIDC issuer is allowed only when NODE_ENV=test.',
+        path: ['GOOGLE_OIDC_ISSUER'],
+      });
+    }
+
     if (value.EMAIL_ENABLED && (!value.RESEND_API_KEY || !value.EMAIL_FROM)) {
       context.addIssue({
         code: z.ZodIssueCode.custom,

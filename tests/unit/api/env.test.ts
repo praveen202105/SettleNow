@@ -42,4 +42,45 @@ describe('environment configuration', () => {
       }),
     ).toThrow('S3 bucket and credentials are required when STORAGE_DRIVER=s3.');
   });
+
+  it('requires Google credentials when Google authentication is enabled', () => {
+    expect(() =>
+      parseEnvironment({
+        DATABASE_URL: databaseUrl,
+        GOOGLE_AUTH_ENABLED: 'true',
+      }),
+    ).toThrow(
+      'GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are required when GOOGLE_AUTH_ENABLED=true.',
+    );
+
+    expect(
+      parseEnvironment({
+        DATABASE_URL: databaseUrl,
+        GOOGLE_AUTH_ENABLED: 'true',
+        GOOGLE_CLIENT_ID: 'client-id',
+        GOOGLE_CLIENT_SECRET: 'client-secret',
+      }),
+    ).toMatchObject({
+      GOOGLE_AUTH_ENABLED: true,
+      GOOGLE_OIDC_ISSUER: 'https://accounts.google.com',
+    });
+  });
+
+  it('allows a non-Google OIDC issuer only for isolated tests', () => {
+    expect(() =>
+      parseEnvironment({
+        DATABASE_URL: databaseUrl,
+        GOOGLE_OIDC_ISSUER: 'http://127.0.0.1:4010',
+        NODE_ENV: 'production',
+      }),
+    ).toThrow('A custom Google OIDC issuer is allowed only when NODE_ENV=test.');
+
+    expect(
+      parseEnvironment({
+        DATABASE_URL: databaseUrl,
+        GOOGLE_OIDC_ISSUER: 'http://127.0.0.1:4010',
+        NODE_ENV: 'test',
+      }).GOOGLE_OIDC_ISSUER,
+    ).toBe('http://127.0.0.1:4010');
+  });
 });
