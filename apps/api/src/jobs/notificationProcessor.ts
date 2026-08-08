@@ -1,8 +1,12 @@
 import { Prisma } from '@prisma/client';
 
-import { formatUsd } from '@settleflow/shared';
-
 import { env } from '../config/env.js';
+import {
+  exportReadyEmail,
+  orderOverdueEmail,
+  paymentRecordedEmail,
+  welcomeEmail,
+} from '../emails/templates.js';
 import { prisma } from '../lib/prisma.js';
 import { writeAuditEvent } from '../services/audit.js';
 import {
@@ -112,13 +116,17 @@ export async function notifyPaymentRecorded(
   ]);
   if (!order || !payment) return;
   const amount = Number(payment.amountCents);
+  const content = paymentRecordedEmail({
+    amountCents: amount,
+    appOrigin: env.APP_ORIGIN,
+    orderId: order.id,
+    orderNumber: `ORD-${order.publicId}`,
+  });
   await deliver(
     {
+      ...content,
       eventKey: `payment-recorded-${payment.id}`,
-      html: `<p>A payment of <strong>${formatUsd(amount)}</strong> was recorded for ORD-${order.publicId}.</p>`,
       orderId: order.id,
-      subject: `Payment recorded for ORD-${order.publicId}`,
-      text: `A payment of ${formatUsd(amount)} was recorded for ORD-${order.publicId}.`,
       type: 'payment.recorded',
       userId: data.userId,
     },
@@ -134,13 +142,14 @@ export async function notifyExportReady(
     where: { id: data.exportId, userId: data.userId },
   });
   if (!job || job.status !== 'completed') return;
-  const url = `${env.APP_ORIGIN}/exports`;
+  const content = exportReadyEmail({
+    appOrigin: env.APP_ORIGIN,
+    fileName: job.fileName ?? 'SettleFlow order export',
+  });
   await deliver(
     {
+      ...content,
       eventKey: `export-ready-${job.id}`,
-      html: `<p>Your SettleFlow order export is ready.</p><p><a href="${url}">Open exports</a></p>`,
-      subject: 'Your SettleFlow export is ready',
-      text: `Your SettleFlow order export is ready: ${url}`,
       type: 'export.ready',
       userId: data.userId,
     },
@@ -154,15 +163,42 @@ export async function notifyOrderOverdue(
 ): Promise<void> {
   const order = await prisma.order.findFirst({ where: { id: data.orderId, userId: data.userId } });
   if (!order) return;
+  const orderNumber = `ORD-${order.publicId}`;
+  const content = orderOverdueEmail({
+    appOrigin: env.APP_ORIGIN,
+    customer: order.customer,
+    dueDate: order.dueDate.toISOString().slice(0, 10),
+    orderId: order.id,
+    orderNumber,
+  });
   await deliver(
     {
+      ...content,
       eventKey: `order-overdue-${order.id}-${order.dueDate.toISOString().slice(0, 10)}`,
-      html: `<p>ORD-${order.publicId} for <strong>${order.customer}</strong> is overdue.</p>`,
       orderId: order.id,
-      subject: `ORD-${order.publicId} is overdue`,
-      text: `ORD-${order.publicId} for ${order.customer} is overdue.`,
       type: 'order.overdue',
       userId: data.userId,
+    },
+    options,
+  );
+}
+
+export async function notifyWelcome(
+  data: { userId: string },
+  options?: NotificationDeliveryOptions,
+): Promise<void> {
+  const user = await prisma.user.findUnique({ where: { id: data.userId } });
+  if (!user) return;
+  const content = welcomeEmail({
+    appOrigin: env.APP_ORIGIN,
+    displayName: user.displayName,
+  });
+  await deliver(
+    {
+      ...content,
+      eventKey: `user-welcome-${user.id}`,
+      type: 'user.welcome',
+      userId: user.id,
     },
     options,
   );

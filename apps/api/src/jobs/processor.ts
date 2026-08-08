@@ -5,6 +5,7 @@ import {
   notifyExportReady,
   notifyOrderOverdue,
   notifyPaymentRecorded,
+  notifyWelcome,
   overdueOrders,
 } from './notificationProcessor.js';
 import type { SettleFlowJobData } from './queue.js';
@@ -34,6 +35,9 @@ export async function processJob(
         paymentId: required(job.data.paymentId, 'paymentId'),
         userId: required(job.data.userId, 'userId'),
       });
+      return;
+    case 'notification.user-welcome':
+      await notifyWelcome({ userId: required(job.data.userId, 'userId') });
       return;
     case 'notification.order-overdue':
       await notifyOrderOverdue({

@@ -15,7 +15,7 @@ Production: [https://settleflow-production-77e1.up.railway.app](https://settlefl
 - Filtered dashboards, summary cards, responsive mobile layouts and accessible controls.
 - Asynchronous CSV exports stored in private object storage for 24 hours.
 - Activity history for authentication, customers, orders, payments, exports and notifications.
-- A Gmail REST API notification pipeline for payment, overdue-order and export-ready events.
+- Branded responsive welcome, payment, overdue-order and export-ready emails through Gmail REST API.
 
 ## Architecture
 
@@ -92,7 +92,9 @@ The API also enables Helmet, strict origin checks, distributed authentication ra
 
 Order/payment changes and their outbox records commit in the same PostgreSQL transaction. A dispatcher publishes outbox rows to BullMQ with stable job IDs. The worker processes jobs independently from the API replicas and retries transient failures five times with exponential backoff.
 
-Notification deliveries are uniquely keyed per domain event. Nodemailer builds standards-compliant MIME messages, then the worker refreshes a short-lived Google OAuth access token and sends the encoded message through Gmail's HTTPS `users.messages.send` endpoint. SettleFlow stores Gmail's provider message ID and uses a deterministic opaque RFC Message-ID for retry deduplication. Notifications go to the SettleFlow account owner, not to the customer mobile number.
+Notification deliveries are uniquely keyed per domain event. Password signup and first-time Google signup write a welcome-email event in the same transaction that creates the user; returning logins never enqueue another welcome email. Nodemailer builds standards-compliant MIME messages, then the worker refreshes a short-lived Google OAuth access token and sends the encoded message through Gmail's HTTPS `users.messages.send` endpoint. SettleFlow stores Gmail's provider message ID and uses a deterministic opaque RFC Message-ID for retry deduplication. Notifications go to the SettleFlow account owner, not to the customer mobile number.
+
+Email templates are owned locally under `apps/api/src/emails`. They use a shared email-safe SettleFlow layout, responsive mobile rules, inline styling, escaped dynamic values, visible fallback links and plain-text alternatives. Templates do not depend on a third-party editor at runtime; exported HTML from a visual builder such as Beefree can be adapted into the same local template layer when design changes are needed.
 
 Email configuration belongs only to the worker. Setting `EMAIL_ENABLED=false` disables delivery and records new events as skipped. Gmail availability does not make worker readiness fail; token-refresh or send failures are recorded and retried by BullMQ.
 

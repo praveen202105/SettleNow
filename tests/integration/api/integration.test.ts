@@ -11,7 +11,10 @@ import type {
   GoogleProfile,
 } from '../../../apps/api/src/auth/google.js';
 import { processOrderExport } from '../../../apps/api/src/jobs/exportProcessor.js';
-import { notifyPaymentRecorded } from '../../../apps/api/src/jobs/notificationProcessor.js';
+import {
+  notifyPaymentRecorded,
+  notifyWelcome,
+} from '../../../apps/api/src/jobs/notificationProcessor.js';
 import { prisma } from '../../../apps/api/src/lib/prisma.js';
 import { disconnectRedis, redis } from '../../../apps/api/src/lib/redis.js';
 import type { MailMessage, MailTransport } from '../../../apps/api/src/services/mailer.js';
@@ -106,6 +109,7 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
+  await prisma.outboxEvent.deleteMany();
   await prisma.user.deleteMany();
   customerSequence = 0;
   fakeGoogle.profiles.clear();
@@ -142,6 +146,45 @@ describe('authentication', () => {
     expect((await agent.get('/api/v1/auth/me')).status).toBe(200);
   });
 
+  it('queues and idempotently delivers a branded welcome email after signup', async () => {
+    const agent = request.agent(app);
+    const created = await signup(agent, 'welcome@example.com');
+    expect(created.status).toBe(201);
+    const userId = created.body.data.id as string;
+
+    const welcomeEvent = await prisma.outboxEvent.findFirst({
+      where: { topic: 'user.welcome' },
+    });
+    expect(welcomeEvent?.payload).toEqual({ userId });
+
+    const sentMessages: MailMessage[] = [];
+    const mailTransport: MailTransport = {
+      sendMail: (message) => {
+        sentMessages.push(message);
+        return Promise.resolve({ messageId: 'gmail-welcome-message' });
+      },
+    };
+    const options = {
+      enabled: true,
+      from: 'SettleFlow <coderpraveengupta@gmail.com>',
+      mailTransport,
+    };
+    await notifyWelcome({ userId }, options);
+    await notifyWelcome({ userId }, options);
+
+    expect(sentMessages).toHaveLength(1);
+    expect(sentMessages[0]).toMatchObject({
+      subject: 'Welcome to SettleFlow',
+      to: 'welcome@example.com',
+    });
+    expect(sentMessages[0]?.html).toContain('Create your first order');
+    expect(
+      await prisma.notificationDelivery.findUnique({
+        where: { eventKey: `user-welcome-${userId}` },
+      }),
+    ).toMatchObject({ providerMessageId: 'gmail-welcome-message', status: 'sent' });
+  });
+
   it('returns stable validation and duplicate-account error contracts', async () => {
     const first = request.agent(app);
     const second = request.agent(app);
@@ -175,6 +218,7 @@ describe('authentication', () => {
     expect(callback.status).toBe(302);
     expect(callback.headers.location).toBe('/orders');
     expect(callback.headers['set-cookie']?.[0]).toContain('HttpOnly');
+    expect(await prisma.outboxEvent.count({ where: { topic: 'user.welcome' } })).toBe(1);
 
     const me = await agent.get('/api/v1/auth/me');
     expect(me.body.data).toMatchObject({
@@ -199,6 +243,7 @@ describe('authentication', () => {
     const returningState = await startGoogle(agent);
     expect((await finishGoogle(agent, returningState, profile, 'google-code-2')).status).toBe(302);
     expect(await prisma.user.count({ where: { email: profile.email } })).toBe(1);
+    expect(await prisma.outboxEvent.count({ where: { topic: 'user.welcome' } })).toBe(1);
   });
 
   it('requires explicit same-email linking and supports safe connect and disconnect', async () => {

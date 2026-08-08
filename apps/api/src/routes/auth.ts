@@ -182,6 +182,12 @@ async function signInWithGoogle(
       requestId: requestId(request),
       userId: created.id,
     });
+    await transaction.outboxEvent.create({
+      data: {
+        payload: { userId: created.id },
+        topic: 'user.welcome',
+      },
+    });
     return created;
   });
 }
@@ -318,6 +324,12 @@ export function createAuthRouter(options: AuthRouterOptions = {}) {
           metadata: { provider: 'password' },
           requestId: requestId(request),
           userId: created.id,
+        });
+        await transaction.outboxEvent.create({
+          data: {
+            payload: { userId: created.id },
+            topic: 'user.welcome',
+          },
         });
         return created;
       });

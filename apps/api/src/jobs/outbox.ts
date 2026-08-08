@@ -17,6 +17,7 @@ function jobName(topic: string): SettleFlowJobName {
     'export.ready': 'notification.export-ready',
     'export.requested': 'export.generate',
     'payment.recorded': 'notification.payment-recorded',
+    'user.welcome': 'notification.user-welcome',
   };
   const name = names[topic];
   if (!name) throw new Error(`Unsupported outbox topic: ${topic}`);
