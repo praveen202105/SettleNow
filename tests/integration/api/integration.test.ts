@@ -495,7 +495,7 @@ describe('orders and settlements', () => {
     )?.id;
     expect(finalPaymentId).toBeTruthy();
     const failingTransport: MailTransport = {
-      sendMail: () => Promise.reject(new Error('SMTP unavailable')),
+      sendMail: () => Promise.reject(new Error('Gmail API unavailable')),
     };
     await expect(
       notifyPaymentRecorded(
@@ -506,12 +506,12 @@ describe('orders and settlements', () => {
           mailTransport: failingTransport,
         },
       ),
-    ).rejects.toThrow('SMTP unavailable');
+    ).rejects.toThrow('Gmail API unavailable');
     expect(
       await prisma.notificationDelivery.findUnique({
         where: { eventKey: `payment-recorded-${finalPaymentId}` },
       }),
-    ).toMatchObject({ status: 'failed', errorMessage: 'SMTP unavailable' });
+    ).toMatchObject({ status: 'failed', errorMessage: 'Gmail API unavailable' });
 
     const extra = await agent.post(`/api/v1/orders/${order.id}/payments`).send({
       amountCents: 100,

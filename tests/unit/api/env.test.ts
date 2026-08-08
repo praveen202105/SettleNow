@@ -84,28 +84,44 @@ describe('environment configuration', () => {
     ).toBe('http://127.0.0.1:4010');
   });
 
-  it('requires complete SMTP credentials only when email is enabled', () => {
+  it('requires complete Gmail API credentials only when email is enabled', () => {
     expect(() =>
       parseEnvironment({
         DATABASE_URL: databaseUrl,
         EMAIL_ENABLED: 'true',
         EMAIL_FROM: 'SettleFlow <coderpraveengupta@gmail.com>',
       }),
-    ).toThrow('SMTP_USER, SMTP_PASSWORD and EMAIL_FROM are required when EMAIL_ENABLED=true.');
+    ).toThrow(
+      'GMAIL_API_CLIENT_ID, GMAIL_API_CLIENT_SECRET, GMAIL_API_REFRESH_TOKEN, GMAIL_API_SENDER and EMAIL_FROM are required when EMAIL_ENABLED=true.',
+    );
 
     expect(
       parseEnvironment({
         DATABASE_URL: databaseUrl,
         EMAIL_ENABLED: 'true',
         EMAIL_FROM: 'SettleFlow <coderpraveengupta@gmail.com>',
-        SMTP_PASSWORD: 'app-password',
-        SMTP_USER: 'coderpraveengupta@gmail.com',
+        GMAIL_API_CLIENT_ID: 'client-id',
+        GMAIL_API_CLIENT_SECRET: 'client-secret',
+        GMAIL_API_REFRESH_TOKEN: 'refresh-token',
+        GMAIL_API_SENDER: 'coderpraveengupta@gmail.com',
       }),
     ).toMatchObject({
       EMAIL_ENABLED: true,
-      SMTP_HOST: 'smtp.gmail.com',
-      SMTP_PORT: 465,
-      SMTP_SECURE: true,
+      GMAIL_API_SENDER: 'coderpraveengupta@gmail.com',
     });
+  });
+
+  it('requires the configured From address to match the authorized Gmail sender', () => {
+    expect(() =>
+      parseEnvironment({
+        DATABASE_URL: databaseUrl,
+        EMAIL_ENABLED: 'true',
+        EMAIL_FROM: 'SettleFlow <different@example.com>',
+        GMAIL_API_CLIENT_ID: 'client-id',
+        GMAIL_API_CLIENT_SECRET: 'client-secret',
+        GMAIL_API_REFRESH_TOKEN: 'refresh-token',
+        GMAIL_API_SENDER: 'coderpraveengupta@gmail.com',
+      }),
+    ).toThrow('EMAIL_FROM address must match GMAIL_API_SENDER.');
   });
 });

@@ -15,7 +15,7 @@ Production: [https://settleflow-production-77e1.up.railway.app](https://settlefl
 - Filtered dashboards, summary cards, responsive mobile layouts and accessible controls.
 - Asynchronous CSV exports stored in private object storage for 24 hours.
 - Activity history for authentication, customers, orders, payments, exports and notifications.
-- A Gmail SMTP notification pipeline for payment, overdue-order and export-ready events.
+- A Gmail REST API notification pipeline for payment, overdue-order and export-ready events.
 
 ## Architecture
 
@@ -42,7 +42,7 @@ Railway Edge
                                    ▼
                               private worker
                                ├── CSV → private S3-compatible bucket
-                               └── email → Nodemailer → Gmail SMTP
+                               └── email → Nodemailer MIME → Gmail REST API
 ```
 
 Dashboard list and summary reads support an optional `READ_DATABASE_URL`. Without it, the read client safely uses the primary database. Writes, order details and payment validation always use the primary. After a mutation, that user's dashboard reads remain on primary for ten seconds to preserve read-after-write consistency.
@@ -86,17 +86,17 @@ Passwords use Argon2id. Google uses backend Authorization Code flow with PKCE, n
 
 Sessions use opaque random tokens in HttpOnly, Secure production cookies with SameSite=Lax. Redis stores only SHA-256 token hashes with TTLs. Sessions rotate after signup, login and authentication-method changes.
 
-The API also enables Helmet, strict origin checks, distributed authentication rate limits, Zod validation, request IDs, structured Pino logs, centralized errors, user ownership checks, graceful shutdown and dependency readiness endpoints. Passwords, cookies, OAuth values, SMTP credentials and storage credentials must never be logged or committed.
+The API also enables Helmet, strict origin checks, distributed authentication rate limits, Zod validation, request IDs, structured Pino logs, centralized errors, user ownership checks, graceful shutdown and dependency readiness endpoints. Passwords, cookies, OAuth values, Gmail refresh tokens and storage credentials must never be logged or committed.
 
 ## Async work and email delivery
 
 Order/payment changes and their outbox records commit in the same PostgreSQL transaction. A dispatcher publishes outbox rows to BullMQ with stable job IDs. The worker processes jobs independently from the API replicas and retries transient failures five times with exponential backoff.
 
-Notification deliveries are uniquely keyed per domain event. Nodemailer sends through Gmail SMTP, records the SMTP message ID and uses a deterministic opaque RFC Message-ID for retry deduplication. Notifications go to the SettleFlow account owner, not to the customer mobile number.
+Notification deliveries are uniquely keyed per domain event. Nodemailer builds standards-compliant MIME messages, then the worker refreshes a short-lived Google OAuth access token and sends the encoded message through Gmail's HTTPS `users.messages.send` endpoint. SettleFlow stores Gmail's provider message ID and uses a deterministic opaque RFC Message-ID for retry deduplication. Notifications go to the SettleFlow account owner, not to the customer mobile number.
 
-Email configuration belongs only to the worker. Setting `EMAIL_ENABLED=false` disables delivery and records new events as skipped. SMTP availability does not make worker readiness fail; a send failure is recorded and retried by BullMQ.
+Email configuration belongs only to the worker. Setting `EMAIL_ENABLED=false` disables delivery and records new events as skipped. Gmail availability does not make worker readiness fail; token-refresh or send failures are recorded and retried by BullMQ.
 
-Railway allows outbound SMTP only on Pro plans and above. The current deployment therefore keeps `EMAIL_ENABLED=false` while retaining the Gmail App Password as a sealed worker-only variable. After a Railway Pro upgrade, redeploy the worker before enabling delivery. See [Railway outbound networking](https://docs.railway.com/networking/outbound-networking).
+The Gmail REST API uses outbound HTTPS, so it works on Railway plans that block SMTP. The long-lived refresh token and OAuth client secret are sealed worker-only variables; access tokens remain in worker memory and are never written to the database or logs.
 
 ## Local development
 
@@ -108,7 +108,7 @@ Requirements:
 
 ```bash
 cp .env.example .env
-docker compose up -d postgres redis minio mailpit
+docker compose up -d postgres redis minio
 pnpm install --frozen-lockfile
 pnpm db:deploy
 pnpm db:test:deploy
@@ -120,22 +120,18 @@ Open:
 - Application: `http://localhost:5173`
 - API: `http://localhost:3000/api/v1`
 - Worker health: `http://localhost:3001/health/ready`
-- Mailpit inbox: `http://localhost:8025`
 - MinIO console: `http://localhost:9001`
 
-To test email locally without Gmail, set:
+Email delivery is disabled locally by default. Unit and integration tests inject a fake transport and never contact Google. To exercise real Gmail delivery locally, authorize the dedicated sender as described below and set:
 
 ```text
 EMAIL_ENABLED=true
-EMAIL_FROM=SettleFlow <local@settleflow.test>
-SMTP_HOST=127.0.0.1
-SMTP_PORT=1025
-SMTP_SECURE=false
-SMTP_USER=local
-SMTP_PASSWORD=local
+EMAIL_FROM=SettleFlow <coderpraveengupta@gmail.com>
+GMAIL_API_CLIENT_ID=<oauth-client-id>
+GMAIL_API_CLIENT_SECRET=<oauth-client-secret>
+GMAIL_API_REFRESH_TOKEN=<offline-refresh-token>
+GMAIL_API_SENDER=coderpraveengupta@gmail.com
 ```
-
-Mailpit accepts the local credentials and captures messages instead of delivering them externally.
 
 ### Development seed
 
@@ -174,19 +170,18 @@ CACHE_TTL_SECONDS=30
 READ_AFTER_WRITE_SECONDS=10
 ```
 
-Gmail SMTP variables, used only by the worker in production:
+Gmail REST API variables, used only by the worker in production:
 
 ```text
 EMAIL_ENABLED=false
 EMAIL_FROM=SettleFlow <coderpraveengupta@gmail.com>
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=465
-SMTP_SECURE=true
-SMTP_USER=coderpraveengupta@gmail.com
-SMTP_PASSWORD=<sealed-gmail-app-password>
+GMAIL_API_CLIENT_ID=<oauth-client-id>
+GMAIL_API_CLIENT_SECRET=<sealed-oauth-client-secret>
+GMAIL_API_REFRESH_TOKEN=<sealed-offline-refresh-token>
+GMAIL_API_SENDER=coderpraveengupta@gmail.com
 ```
 
-The Gmail account must have two-step verification and an App Password. Do not use the normal account password. If App Passwords are unavailable for the account, email must remain disabled until an approved SMTP authentication method is configured.
+Enable the Gmail API in the Google Cloud project and authorize the dedicated sender with only `https://www.googleapis.com/auth/gmail.send` plus offline access. Use a separate sender authorization grant from SettleFlow user login. Google access and refresh tokens must never enter React state or browser storage.
 
 Storage uses provider-neutral `S3_*` variables. Railway's bucket is S3-compatible; this does not imply that SettleFlow uses AWS infrastructure.
 
@@ -270,8 +265,9 @@ The production Gmail rollout uses this sequence:
 1. Deploy code and database migration with `EMAIL_ENABLED=false`.
 2. Verify API and worker readiness plus customer create/reuse behavior.
 3. Remove obsolete email-provider variables.
-4. Add sealed Gmail SMTP variables to the worker only; never add the App Password to source control.
-5. On Railway Pro or above, redeploy the worker, enable email and verify an export-ready notification and authenticated download. On lower plans, keep email disabled and use an approved HTTPS email provider instead.
+4. Enable Gmail API and authorize `coderpraveengupta@gmail.com` for the `gmail.send` scope with offline access.
+5. Add the OAuth client secret and refresh token as sealed variables on the worker only.
+6. Redeploy the worker, enable email and verify an export-ready notification and authenticated download.
 
 The production Google callback is:
 
@@ -284,9 +280,10 @@ https://settleflow-production-77e1.up.railway.app/api/v1/auth/google/callback
 - **Customer does not appear:** search by full E.164 mobile and confirm the customer belongs to the signed-in account.
 - **Duplicate mobile error:** select the existing customer returned by the directory instead of creating another record.
 - **Legacy order cannot be edited:** select or create a saved customer first; locked legacy orders remain historical and cannot be edited.
-- **Email skipped:** check `EMAIL_ENABLED`; skipped events are expected while SMTP rollout is disabled.
-- **Gmail authentication failed:** confirm two-step verification, use an App Password, and verify `SMTP_USER` matches the Gmail sender.
-- **Worker jobs retrying:** inspect worker logs and `notification_deliveries`; SMTP errors are retained without exposing credentials.
+- **Email skipped:** check `EMAIL_ENABLED`; skipped events are expected while Gmail authorization is disabled.
+- **Gmail token refresh failed:** confirm the Gmail API is enabled, the refresh token belongs to `GMAIL_API_SENDER`, and the OAuth grant has not been revoked.
+- **Gmail API returns 403:** verify the sender grant includes `https://www.googleapis.com/auth/gmail.send` and the API is enabled in the matching Google Cloud project.
+- **Worker jobs retrying:** inspect worker logs and `notification_deliveries`; Gmail API errors are retained without exposing OAuth credentials.
 - **Stale dashboard after a write:** verify Redis is reachable; mutations increment user cache versions and force primary reads temporarily.
 - **OAuth account-link-required:** sign in with the existing password account, then connect the matching Google email under Security.
 

@@ -26,6 +26,10 @@ const envSchema = z
     DATABASE_URL: z.string().min(1),
     EMAIL_ENABLED: booleanFromString.default(false),
     EMAIL_FROM: optionalString,
+    GMAIL_API_CLIENT_ID: optionalString,
+    GMAIL_API_CLIENT_SECRET: optionalString,
+    GMAIL_API_REFRESH_TOKEN: optionalString,
+    GMAIL_API_SENDER: z.string().email().optional(),
     GOOGLE_AUTH_ENABLED: booleanFromString.default(false),
     GOOGLE_CLIENT_ID: optionalString,
     GOOGLE_CLIENT_SECRET: optionalString,
@@ -41,11 +45,6 @@ const envSchema = z
     REDIS_URL: z.string().min(1).default('redis://127.0.0.1:6379'),
     SESSION_COOKIE_NAME: z.string().min(1).max(64).default('settleflow_session'),
     SESSION_TTL_DAYS: z.coerce.number().int().min(1).max(90).default(7),
-    SMTP_HOST: z.string().min(1).default('smtp.gmail.com'),
-    SMTP_PASSWORD: optionalString,
-    SMTP_PORT: z.coerce.number().int().min(1).max(65_535).default(465),
-    SMTP_SECURE: booleanFromString.default(true),
-    SMTP_USER: optionalString,
     S3_ACCESS_KEY_ID: optionalString,
     S3_BUCKET_NAME: optionalString,
     S3_ENDPOINT_URL: optionalUrl,
@@ -77,12 +76,32 @@ const envSchema = z
       });
     }
 
-    if (value.EMAIL_ENABLED && (!value.SMTP_USER || !value.SMTP_PASSWORD || !value.EMAIL_FROM)) {
+    if (
+      value.EMAIL_ENABLED &&
+      (!value.GMAIL_API_CLIENT_ID ||
+        !value.GMAIL_API_CLIENT_SECRET ||
+        !value.GMAIL_API_REFRESH_TOKEN ||
+        !value.GMAIL_API_SENDER ||
+        !value.EMAIL_FROM)
+    ) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
-        message: 'SMTP_USER, SMTP_PASSWORD and EMAIL_FROM are required when EMAIL_ENABLED=true.',
+        message:
+          'GMAIL_API_CLIENT_ID, GMAIL_API_CLIENT_SECRET, GMAIL_API_REFRESH_TOKEN, GMAIL_API_SENDER and EMAIL_FROM are required when EMAIL_ENABLED=true.',
         path: ['EMAIL_ENABLED'],
       });
+    }
+
+    if (value.EMAIL_ENABLED && value.EMAIL_FROM && value.GMAIL_API_SENDER) {
+      const bracketedAddress = value.EMAIL_FROM.match(/<([^<>]+)>\s*$/)?.[1];
+      const fromAddress = (bracketedAddress ?? value.EMAIL_FROM).trim().toLowerCase();
+      if (fromAddress !== value.GMAIL_API_SENDER.toLowerCase()) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'EMAIL_FROM address must match GMAIL_API_SENDER.',
+          path: ['EMAIL_FROM'],
+        });
+      }
     }
 
     if (
