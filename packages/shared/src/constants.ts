@@ -8,6 +8,7 @@ export const AUDIT_ACTIONS = [
   'auth.logout',
   'auth.google.linked',
   'auth.google.unlinked',
+  'customer.created',
   'order.created',
   'order.updated',
   'order.deleted',

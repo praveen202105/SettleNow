@@ -1,66 +1,246 @@
 # SettleFlow
 
-SettleFlow is a production-oriented B2B order and settlement tracker. It keeps order totals and payment validation on the server, stores money as integer USD cents, and prevents concurrent payments from exceeding an order's balance.
+SettleFlow is a production-oriented B2B order and settlement workspace. Teams can save customers once, create itemized orders, record partial payments, track overdue balances, export filtered CSV reports and review an immutable activity trail.
 
-Live application: [https://web-api-production-af27.up.railway.app](https://web-api-production-af27.up.railway.app)
+Production: [https://web-api-production-af27.up.railway.app](https://web-api-production-af27.up.railway.app)
 
-## Stack and layout
+## Product capabilities
 
-- `apps/web`: React 19, TypeScript, Vite, Tailwind CSS, TanStack Query, React Hook Form, Zod, and an owned shadcn-style component system built on Radix UI.
-- `apps/api`: Express 5, Prisma, PostgreSQL, Redis, BullMQ, Google OpenID Connect, private object storage, Resend, Pino, and Zod. The same build provides independent API and worker entrypoints.
-- `packages/shared`: shared schemas, API contracts, money/date helpers, and status calculation.
-- `tests/unit`: shared-domain and React component/client unit tests.
-- `tests/integration`: API, authentication, database, and concurrency integration tests.
-- `tests/e2e`: Playwright release smoke tests.
+- Password and Google authentication with revocable server-side sessions.
+- User-owned customer directory with required international mobile numbers.
+- Searchable customer selection, so repeat orders do not require retyping customer details.
+- Itemized USD orders with server-calculated totals and date-only due dates.
+- Partial payment history, remaining balances and concurrency-safe overpayment prevention.
+- Pending, partially paid, overdue and paid status tracking.
+- Filtered dashboards, summary cards, responsive mobile layouts and accessible controls.
+- Asynchronous CSV exports stored in private object storage for 24 hours.
+- Activity history for authentication, customers, orders, payments, exports and notifications.
+- Gmail SMTP notifications for payment, overdue-order and export-ready events.
 
-The API and built frontend run from one public production service behind Railway Edge. Redis-backed sessions make two API replicas stateless; a private worker processes transactional outbox events, exports and email notifications.
+## Architecture
+
+The React application and Express API share one public origin. Railway Edge terminates HTTPS and balances requests across two stateless API replicas. PostgreSQL is the source of truth; Redis provides sessions, distributed rate limits, short-lived dashboard caching and BullMQ.
 
 ```text
-Browser → Railway Edge → web-api ×2 → PostgreSQL primary
-                              ├──→ Redis sessions/cache/rate limits
-                              └──→ transactional outbox → BullMQ → worker
-                                                               ├──→ CSV bucket
-                                                               └──→ Resend
+Browser
+  │ HTTPS
+  ▼
+Railway Edge
+  │
+  ├── web-api replica 1 ─┐
+  └── web-api replica 2 ─┤
+                         ├── PostgreSQL primary
+                         │     ├── users / auth identities
+                         │     ├── customers / orders / payments
+                         │     └── audit / outbox / exports / deliveries
+                         ├── Redis
+                         │     ├── opaque sessions
+                         │     ├── rate limits and cache versions
+                         │     └── BullMQ
+                         └── transactional outbox
+                                   │
+                                   ▼
+                              private worker
+                               ├── CSV → private S3-compatible bucket
+                               └── email → Nodemailer → Gmail SMTP
 ```
 
-Dashboard reads support an optional `READ_DATABASE_URL`. Without it, the read client safely falls back to the primary database.
+Dashboard list and summary reads support an optional `READ_DATABASE_URL`. Without it, the read client safely uses the primary database. Writes, order details and payment validation always use the primary. After a mutation, that user's dashboard reads remain on primary for ten seconds to preserve read-after-write consistency.
 
-The frontend keeps design tokens and reusable primitives in `apps/web/src/components/ui`. Shared fields, input groups, dialogs, menus, navigation, loading states, and responsive layouts are used across authentication, orders, details, and payments rather than screen-specific controls.
+### Repository layout
 
-## Local setup
+- `apps/web`: React 19, Vite, Tailwind, TanStack Query, React Hook Form and local Radix-based UI components.
+- `apps/api`: Express 5, Prisma, PostgreSQL, Redis, BullMQ, Nodemailer, object storage and worker entrypoints.
+- `packages/shared`: Zod schemas, API types, cents/date/phone helpers and status rules shared by frontend and backend.
+- `tests/unit`: domain, API helper and component tests.
+- `tests/integration`: authenticated API, database, ownership and concurrency tests.
+- `tests/e2e`: Playwright browser release flows.
 
-Requirements: Node.js 24 LTS, pnpm 9.12.0, and Docker.
+## Customer and order data model
+
+Every customer belongs to one SettleFlow user. Mobile numbers are normalized to E.164, such as `+919876543210`, and are unique within that user's directory. Two customers may share a name when their mobile numbers differ. The same mobile may exist under different SettleFlow users without leaking data between accounts.
+
+New orders reference a customer record and copy the customer's current name and mobile into order snapshot fields. Historical order documents therefore remain stable even if customer management is extended later. Orders created before the customer directory migration remain readable with a legacy name and no mobile; no fake mobile data is generated. An unlocked legacy order must select or add a saved customer before it can be updated.
+
+Once the first payment is recorded, an order becomes immutable. Customer selection, due date and line items can no longer be changed or deleted because doing so would invalidate settlement history.
+
+## Money, dates and statuses
+
+- Currency is USD.
+- Monetary values are integer cents in the API and `BIGINT` in PostgreSQL.
+- Floating-point arithmetic is never used for payment validation or stored totals.
+- Due dates use ISO `YYYY-MM-DD`; timestamps are UTC.
+- A payment is created inside a PostgreSQL transaction after locking the owning order row.
+- Concurrent payments cannot make the paid total exceed the order total.
+
+Status precedence is:
+
+1. `paid` when total payments equal the order total.
+2. `overdue` when the due date has passed and a balance remains.
+3. `partially_paid` when at least one payment exists and the order is not overdue.
+4. `pending` when no payment exists and the due date has not passed.
+
+## Authentication and security
+
+Passwords use Argon2id. Google uses backend Authorization Code flow with PKCE, nonce validation and single-use Redis state. OAuth codes and tokens never enter React storage and are never persisted. A same-email password account is never silently merged: the user must first authenticate with the password and explicitly connect Google under **Security**.
+
+Sessions use opaque random tokens in HttpOnly, Secure production cookies with SameSite=Lax. Redis stores only SHA-256 token hashes with TTLs. Sessions rotate after signup, login and authentication-method changes.
+
+The API also enables Helmet, strict origin checks, distributed authentication rate limits, Zod validation, request IDs, structured Pino logs, centralized errors, user ownership checks, graceful shutdown and dependency readiness endpoints. Passwords, cookies, OAuth values, SMTP credentials and storage credentials must never be logged or committed.
+
+## Async work and email delivery
+
+Order/payment changes and their outbox records commit in the same PostgreSQL transaction. A dispatcher publishes outbox rows to BullMQ with stable job IDs. The worker processes jobs independently from the API replicas and retries transient failures five times with exponential backoff.
+
+Notification deliveries are uniquely keyed per domain event. Nodemailer sends through Gmail SMTP, records the SMTP message ID and uses a deterministic opaque RFC Message-ID for retry deduplication. Notifications go to the SettleFlow account owner, not to the customer mobile number.
+
+Email remains disabled when `EMAIL_ENABLED=false`. Disabled events are recorded as skipped. SMTP availability does not make worker readiness fail; a send failure is recorded and retried by BullMQ.
+
+## Local development
+
+Requirements:
+
+- Node.js 24 LTS
+- pnpm 9.12.0
+- Docker
 
 ```bash
 cp .env.example .env
-docker compose up -d postgres redis minio
+docker compose up -d postgres redis minio mailpit
 pnpm install --frozen-lockfile
 pnpm db:deploy
 pnpm db:test:deploy
 pnpm dev
 ```
 
-Open `http://localhost:5173`. API requests are proxied to `http://localhost:3000`.
+Open:
 
-### Google authentication
+- Application: `http://localhost:5173`
+- API: `http://localhost:3000/api/v1`
+- Worker health: `http://localhost:3001/health/ready`
+- Mailpit inbox: `http://localhost:8025`
+- MinIO console: `http://localhost:9001`
 
-Password authentication works without additional configuration. To enable Google locally, create a Google Cloud OAuth 2.0 Web application and register:
+To test email locally without Gmail, set:
 
 ```text
-http://localhost:5173/api/v1/auth/google/callback
+EMAIL_ENABLED=true
+EMAIL_FROM=SettleFlow <local@settleflow.test>
+SMTP_HOST=127.0.0.1
+SMTP_PORT=1025
+SMTP_SECURE=false
+SMTP_USER=local
+SMTP_PASSWORD=local
 ```
 
-Set `GOOGLE_AUTH_ENABLED=true`, `GOOGLE_CLIENT_ID`, and `GOOGLE_CLIENT_SECRET` in `.env`. The backend runs Authorization Code + PKCE and stores single-use state in Redis. Google tokens are validated server-side, never returned to React, and never persisted. New verified Google emails create Google-only users. If a password account already owns the email, sign in with the password first and connect Google from **Security**; accounts are never auto-merged by email.
+Mailpit accepts the local credentials and captures messages instead of delivering them externally.
 
-To load the five assignment examples for local development only:
+### Development seed
 
 ```bash
 pnpm db:seed
 ```
 
-The seed account is controlled by `SEED_DEMO_EMAIL` and `SEED_DEMO_PASSWORD` in `.env`. Production users always start with an empty account.
+The seed creates five customers and assignment orders for `SEED_DEMO_EMAIL`. It is blocked when `NODE_ENV=production`.
 
-## Quality checks
+### Google OAuth
+
+Password login works without Google configuration. For local Google login, create an OAuth 2.0 Web client and register:
+
+```text
+http://localhost:5173/api/v1/auth/google/callback
+```
+
+Then set `GOOGLE_AUTH_ENABLED=true`, `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`.
+
+## Environment configuration
+
+Copy `.env.example`; never commit real values.
+
+Core variables:
+
+```text
+NODE_ENV=development
+DATABASE_URL=postgresql://...
+READ_DATABASE_URL=
+REDIS_URL=redis://...
+APP_ORIGIN=http://localhost:5173
+SESSION_COOKIE_NAME=settleflow_session
+SESSION_TTL_DAYS=7
+AUTH_RATE_LIMIT_MAX=20
+CACHE_TTL_SECONDS=30
+READ_AFTER_WRITE_SECONDS=10
+```
+
+Gmail SMTP variables, used only by the worker in production:
+
+```text
+EMAIL_ENABLED=false
+EMAIL_FROM=SettleFlow <coderpraveengupta@gmail.com>
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=465
+SMTP_SECURE=true
+SMTP_USER=coderpraveengupta@gmail.com
+SMTP_PASSWORD=<sealed-gmail-app-password>
+```
+
+The Gmail account must have two-step verification and an App Password. Do not use the normal account password. If App Passwords are unavailable for the account, email must remain disabled until an approved SMTP authentication method is configured.
+
+Storage uses provider-neutral `S3_*` variables. Railway's bucket is S3-compatible; this does not imply that SettleFlow uses AWS infrastructure.
+
+## Public API
+
+All routes are under `/api/v1`. Success responses use `{ "data": ..., "meta"?: ... }`. Errors use `{ "error": { "code", "message", "fieldErrors"?, "requestId"?, ... } }`.
+
+### Authentication
+
+- `GET /auth/config`
+- `POST /auth/signup`
+- `POST /auth/login`
+- `POST /auth/logout`
+- `GET /auth/me`
+- `POST /auth/google/start`
+- `GET /auth/google/callback`
+- `DELETE /auth/google/link`
+
+### Customers
+
+- `GET /customers?search&page&pageSize`
+- `POST /customers` with `{ "name": "Acme", "mobile": "+919876543210" }`
+
+`CUSTOMER_MOBILE_IN_USE` includes `existingCustomerId` so the UI can direct the user to the saved record. Customer/order ownership failures return `CUSTOMER_NOT_FOUND` without exposing another user's data.
+
+### Orders and payments
+
+- `GET /orders`
+- `POST /orders` with `customerId`, `dueDate` and `lineItems`
+- `GET /orders/:id`
+- `PATCH /orders/:id`
+- `DELETE /orders/:id`
+- `POST /orders/:id/payments`
+- `GET /orders/summary`
+
+Dashboard search matches order number, customer name and customer mobile. `ORDER_LOCKED` prevents edits/deletes after a payment. `PAYMENT_EXCEEDS_BALANCE` returns `maxAllowedCents`.
+
+### Activity and exports
+
+- `GET /activity`
+- `POST /exports/orders`
+- `GET /exports`
+- `GET /exports/:id`
+- `POST /exports/:id/retry`
+- `GET /exports/:id/download`
+
+CSV exports snapshot the dashboard filters and include customer name, customer mobile, due date, status, USD totals, payment count and timestamps. Downloads are authenticated and ownership checked.
+
+### Health
+
+- `GET /health/live`
+- `GET /health/ready`
+
+API readiness requires PostgreSQL and Redis. Worker readiness requires PostgreSQL, Redis and BullMQ.
+
+## Testing and release checks
 
 ```bash
 pnpm format:check
@@ -71,103 +251,43 @@ pnpm build
 pnpm test:e2e
 ```
 
-`pnpm check` runs the full sequence. All specs and test setup live under `tests/`. API and Playwright tests use the `settleflow_test` database, so start PostgreSQL and apply the test migrations first.
+`pnpm check` runs the complete sequence. Tests cover money/date/phone behavior, customer ownership and snapshots, Redis sessions/cache, password and Google authentication, order CRUD, payment locking/concurrency, notification idempotency, CSV exports, accessible customer selection and responsive browser flows.
 
-Coverage includes money/date behavior, Redis sessions and cache invalidation, authentication, ownership, order CRUD, transactional payment concurrency, audit events, export ownership and CSV formatting, notification idempotency, shared form accessibility and responsive API/worker/browser workflows.
+## Railway production deployment
 
-## API
+The production project uses one Singapore region:
 
-All endpoints use `/api/v1` and return `{ "data": ... }` (plus optional `meta`) or `{ "error": { "code", "message", "fieldErrors"? } }`.
+- `web-api`: two replicas serving React and `/api/v1`.
+- `worker`: one private replica processing outbox, BullMQ, exports and email.
+- PostgreSQL primary, Redis and a private S3-compatible bucket.
 
-- `GET /auth/config`, `POST /auth/signup`, `POST /auth/login`, `POST /auth/logout`, `GET /auth/me`
-- `POST /auth/google/start`, `GET /auth/google/callback`, `DELETE /auth/google/link`
-- `GET /orders`, `POST /orders`, `GET/PATCH/DELETE /orders/:id`
-- `POST /orders/:id/payments`, `GET /orders/summary`
-- `GET /activity`
-- `POST /exports/orders`, `GET /exports`, `GET /exports/:id`
-- `POST /exports/:id/retry`, `GET /exports/:id/download`
-- `GET /health/live`, `GET /health/ready`
+The API pre-deploy command is `pnpm db:deploy`, ensuring migrations run once before the two replicas start. The API starts with `pnpm start:prod`; the worker starts with `pnpm start:worker`.
 
-Order dates are ISO `YYYY-MM-DD`; timestamps are UTC. Once an order has a payment, edit and delete return `409 ORDER_LOCKED`. Payment writes lock the owning order row inside a PostgreSQL transaction; an overpayment returns `409 PAYMENT_EXCEEDS_BALANCE` with `maxAllowedCents`.
+Deploy SMTP migration safely:
 
-### Status rules and edge cases
+1. Deploy code and database migration with `EMAIL_ENABLED=false`.
+2. Verify API and worker readiness plus customer create/reuse behavior.
+3. Remove obsolete email-provider variables.
+4. Add sealed Gmail SMTP variables to the worker only.
+5. Enable email and trigger a payment/export smoke test only after a valid App Password is available.
 
-Status is derived on the server for every response, using this precedence:
-
-1. `paid` when total payments equal the order total.
-2. `overdue` when the due date is before today and the order is not fully paid.
-3. `partially_paid` when at least one payment exists but the order is not overdue or fully paid.
-4. `pending` when no payment exists and the due date has not passed.
-
-Consequently, a past-due order becomes `paid` after its final payment; `paid` takes precedence over `overdue`. A partially paid order whose due date passes becomes `overdue`. The API rejects payments above the remaining balance, including concurrent attempts. Orders become immutable after their first payment so their settlement history cannot be invalidated by later edits.
-
-## Assumptions and trade-offs
-
-- Version 1 supports USD only. Money is stored and calculated as integer cents; floating-point arithmetic is never used for totals or payment validation.
-- Due dates are date-only values and timestamps are UTC. A due date becomes overdue after that calendar date has passed.
-- Every order, payment, activity event and export is scoped to its account owner. Development seed data is opt-in; new production users start empty.
-- Redis-backed sessions and rate limits keep API replicas stateless, but Redis is therefore required for API readiness. Cache failures fall back to PostgreSQL; session creation does not.
-- Dashboard cache entries live for 30 seconds and use versioned invalidation plus a 10-second primary-read window after mutations.
-- The production release is single-region. `READ_DATABASE_URL` supports a future read replica, but none is provisioned until dashboard load justifies its operational cost.
-- Payments and audit/outbox records are transactionally durable. CSV generation and email notifications are eventually consistent worker jobs with bounded retries.
-- Refunds, multiple currencies, customer notifications, email verification and password reset are outside the assignment scope.
-
-## What I would improve before wider production use
-
-- Add a staging environment, automated backup/restore drills and documented PostgreSQL recovery objectives.
-- Add password-account email verification, password reset, session/device management and optional multi-factor authentication.
-- Add refunds with an explicit ledger model rather than negative payments.
-- Add error tracking, queue-depth alerts, service-level objectives and longer-term audit retention controls.
-- Add a date-range export filter, since the current CSV export snapshots dashboard search, status and sorting filters.
-- Introduce a managed read replica only after production query metrics show a need, and add a WAF if public traffic risk increases.
-
-## Security and operations
-
-- Passwords use Argon2id. Google authentication uses Authorization Code + PKCE, nonce validation, single-use hashed Redis state and explicit account linking. OAuth authorization codes and tokens are excluded from logs and storage.
-- Session cookies are HttpOnly, Secure in production, SameSite=Lax and revocable. Redis stores only SHA-256 session-token hashes with TTLs, and sessions rotate after authentication-method changes.
-- Authentication rate limits are distributed through Redis. Order lists and summaries use short-lived, user-versioned cache keys with primary read-after-write routing.
-- Audit and outbox records commit with domain writes. BullMQ jobs use stable IDs, retries and idempotent notification deliveries.
-- Helmet, request IDs, origin checks, structured logs, environment validation, centralized errors, dependency readiness checks and graceful shutdown are enabled.
-- Never commit `.env`. Set a precise HTTPS `APP_ORIGIN`, `NODE_ENV=production`, `TRUST_PROXY=true`, and an appropriate `LOG_LEVEL` in production.
-- Migrations run once through the API pre-deploy command. API readiness checks PostgreSQL and Redis; worker readiness checks PostgreSQL, Redis and BullMQ.
-
-## Railway deployment
-
-The production Railway project contains `web-api` with two Singapore replicas, `worker` with one Singapore replica, PostgreSQL, Redis and a private export bucket. Important variables include:
-
-```text
-DATABASE_URL=${{Postgres.DATABASE_URL}}
-REDIS_URL=${{Redis.REDIS_URL}}
-NODE_ENV=production
-APP_ORIGIN=https://<public-domain>
-TRUST_PROXY=true
-LOG_LEVEL=info
-SESSION_COOKIE_NAME=settleflow_session
-SESSION_TTL_DAYS=7
-AUTH_RATE_LIMIT_MAX=20
-GOOGLE_AUTH_ENABLED=true
-GOOGLE_CLIENT_ID=<google-oauth-web-client-id>
-GOOGLE_CLIENT_SECRET=<sealed-google-oauth-client-secret>
-STORAGE_DRIVER=s3
-S3_ENDPOINT_URL=<bucket-endpoint>
-S3_REGION=auto
-S3_BUCKET_NAME=<bucket-name>
-S3_ACCESS_KEY_ID=<sealed-access-key>
-S3_SECRET_ACCESS_KEY=<sealed-secret-key>
-S3_FORCE_PATH_STYLE=false
-EMAIL_ENABLED=false
-RESEND_API_KEY=<sealed-secret>
-EMAIL_FROM=SettleFlow <verified@example.com>
-```
-
-The provider-neutral `S3_*` variables configure Railway's S3-compatible bucket; they do not imply AWS infrastructure. The API uses pre-deploy command `pnpm db:deploy` and start command `pnpm start:prod`. The worker starts with `pnpm start:worker`. Export objects expire after 24 hours and are downloaded only through authenticated, ownership-checked API routes. Set `EMAIL_ENABLED=true` only after configuring a Resend API key and verified `EMAIL_FROM` sender.
-
-For production Google authentication, create the OAuth client under the operational Google Cloud account, use an External consent screen with only `openid`, `email`, and `profile`, and register:
+The production Google callback is:
 
 ```text
 https://web-api-production-af27.up.railway.app/api/v1/auth/google/callback
 ```
 
-Only `web-api` needs the Google client variables; the private worker keeps Google authentication disabled.
+## Troubleshooting
 
-Production URL: [https://web-api-production-af27.up.railway.app](https://web-api-production-af27.up.railway.app)
+- **Customer does not appear:** search by full E.164 mobile and confirm the customer belongs to the signed-in account.
+- **Duplicate mobile error:** select the existing customer returned by the directory instead of creating another record.
+- **Legacy order cannot be edited:** select or create a saved customer first; locked legacy orders remain historical and cannot be edited.
+- **Email skipped:** check `EMAIL_ENABLED`; skipped events are expected while SMTP rollout is disabled.
+- **Gmail authentication failed:** confirm two-step verification, use an App Password, and verify `SMTP_USER` matches the Gmail sender.
+- **Worker jobs retrying:** inspect worker logs and `notification_deliveries`; SMTP errors are retained without exposing credentials.
+- **Stale dashboard after a write:** verify Redis is reachable; mutations increment user cache versions and force primary reads temporarily.
+- **OAuth account-link-required:** sign in with the existing password account, then connect the matching Google email under Security.
+
+## Current boundaries
+
+Version 1 supports USD, one mobile per customer record and account-owner email notifications. Customer editing/deletion, customer-facing messaging, refunds, multiple currencies, password reset, MFA, a provisioned read replica, staging and multi-region deployment remain outside this release.

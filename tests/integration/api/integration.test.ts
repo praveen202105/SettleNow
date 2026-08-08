@@ -14,6 +14,7 @@ import { processOrderExport } from '../../../apps/api/src/jobs/exportProcessor.j
 import { notifyPaymentRecorded } from '../../../apps/api/src/jobs/notificationProcessor.js';
 import { prisma } from '../../../apps/api/src/lib/prisma.js';
 import { disconnectRedis, redis } from '../../../apps/api/src/lib/redis.js';
+import type { MailMessage, MailTransport } from '../../../apps/api/src/services/mailer.js';
 
 const app = createApp();
 
@@ -39,10 +40,11 @@ const googleApp = createApp({ googleEnabled: true, googleOidcClient: fakeGoogle 
 type TestAgent = ReturnType<typeof request.agent>;
 
 const validOrder = {
-  customer: 'Acme Corporation',
   dueDate: '2099-01-15',
   lineItems: [{ description: 'Implementation', quantity: 1, unitPriceCents: 100_000 }],
 };
+
+let customerSequence = 0;
 
 function signup(agent: TestAgent, email: string) {
   return agent.post('/api/v1/auth/signup').send({
@@ -52,8 +54,24 @@ function signup(agent: TestAgent, email: string) {
   });
 }
 
-function createOrder(agent: TestAgent, overrides: Record<string, unknown> = {}) {
-  return agent.post('/api/v1/orders').send({ ...validOrder, ...overrides });
+async function createCustomer(
+  agent: TestAgent,
+  name = 'Acme Corporation',
+  mobile = `+919100${String(++customerSequence).padStart(6, '0')}`,
+) {
+  return agent.post('/api/v1/customers').send({ mobile, name });
+}
+
+async function createOrder(
+  agent: TestAgent,
+  overrides: Record<string, unknown> = {},
+  customerName = 'Acme Corporation',
+) {
+  const customerId =
+    typeof overrides.customerId === 'string'
+      ? overrides.customerId
+      : ((await createCustomer(agent, customerName)).body.data.id as string);
+  return agent.post('/api/v1/orders').send({ ...validOrder, customerId, ...overrides });
 }
 
 async function startGoogle(
@@ -89,6 +107,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await prisma.user.deleteMany();
+  customerSequence = 0;
   fakeGoogle.profiles.clear();
   const keys = await redis.keys('settleflow:*');
   if (keys.length > 0) await redis.del(...keys);
@@ -271,6 +290,79 @@ describe('authentication', () => {
   });
 });
 
+describe('customer directory', () => {
+  it('normalizes, isolates and reuses customers while preserving legacy orders', async () => {
+    const owner = request.agent(app);
+    const stranger = request.agent(app);
+    await signup(owner, 'customer-owner@example.com');
+    await signup(stranger, 'customer-stranger@example.com');
+
+    const created = await createCustomer(owner, 'Northstar Labs', '+91 98765-43210');
+    expect(created.status).toBe(201);
+    expect(created.body.data).toMatchObject({
+      mobile: '+919876543210',
+      name: 'Northstar Labs',
+    });
+    const customerId = created.body.data.id as string;
+
+    const duplicate = await createCustomer(owner, 'Northstar Duplicate', '+919876543210');
+    expect(duplicate.status).toBe(409);
+    expect(duplicate.body.error).toMatchObject({
+      code: 'CUSTOMER_MOBILE_IN_USE',
+      existingCustomerId: customerId,
+    });
+    expect((await createCustomer(stranger, 'Independent Customer', '+919876543210')).status).toBe(
+      201,
+    );
+
+    const byName = await owner.get('/api/v1/customers').query({ search: 'northstar' });
+    expect(byName.body.data).toHaveLength(1);
+    const byMobile = await owner.get('/api/v1/customers').query({ search: '9876543210' });
+    expect(byMobile.body.data[0].id).toBe(customerId);
+    expect(
+      (await stranger.get('/api/v1/customers').query({ search: 'Northstar' })).body.data,
+    ).toEqual([]);
+
+    const order = await createOrder(owner, { customerId });
+    expect(order.body.data).toMatchObject({
+      customer: 'Northstar Labs',
+      customerId,
+      customerMobile: '+919876543210',
+    });
+    expect((await createOrder(stranger, { customerId })).body.error.code).toBe(
+      'CUSTOMER_NOT_FOUND',
+    );
+
+    const me = await owner.get('/api/v1/auth/me');
+    const legacy = await prisma.order.create({
+      data: {
+        customer: 'Legacy Customer',
+        dueDate: new Date('2099-02-01T00:00:00.000Z'),
+        userId: me.body.data.id as string,
+        lineItems: {
+          create: {
+            description: 'Legacy service',
+            position: 0,
+            quantity: 1,
+            unitPriceCents: 5_000n,
+          },
+        },
+      },
+    });
+    expect((await owner.get(`/api/v1/orders/${legacy.id}`)).body.data).toMatchObject({
+      customer: 'Legacy Customer',
+      customerId: null,
+      customerMobile: null,
+    });
+
+    const activity = await owner.get('/api/v1/activity').query({ action: 'customer.created' });
+    expect(activity.body.data[0]).toMatchObject({
+      action: 'customer.created',
+      entityId: customerId,
+    });
+  });
+});
+
 describe('orders and settlements', () => {
   it('enforces ownership, supports CRUD, filters, pagination, and summary data', async () => {
     const owner = request.agent(app);
@@ -288,10 +380,7 @@ describe('orders and settlements', () => {
     });
     expect((await stranger.get(`/api/v1/orders/${order.id}`)).status).toBe(404);
 
-    const overdue = await createOrder(owner, {
-      customer: 'Past Due Client',
-      dueDate: '2020-01-01',
-    });
+    const overdue = await createOrder(owner, { dueDate: '2020-01-01' }, 'Past Due Client');
     expect(overdue.status).toBe(201);
 
     const filtered = await owner.get('/api/v1/orders').query({
@@ -306,9 +395,10 @@ describe('orders and settlements', () => {
     expect(filtered.body.data).toHaveLength(1);
     expect(filtered.body.meta).toMatchObject({ page: 1, pageSize: 1, total: 1, totalPages: 1 });
 
+    const updatedCustomer = await createCustomer(owner, 'Acme Updated');
     const updated = await owner.patch(`/api/v1/orders/${order.id}`).send({
       ...validOrder,
-      customer: 'Acme Updated',
+      customerId: updatedCustomer.body.data.id,
     });
     expect(updated.status).toBe(200);
     expect(updated.body.data.customer).toBe('Acme Updated');
@@ -346,23 +436,42 @@ describe('orders and settlements', () => {
       isLocked: true,
     });
     const partialPaymentId = partial.body.data.payments[0].id as string;
-    await notifyPaymentRecorded({
-      orderId: order.id,
-      paymentId: partialPaymentId,
-      userId: currentUserId,
+    const sentMessages: MailMessage[] = [];
+    const mailTransport: MailTransport = {
+      sendMail: (message) => {
+        sentMessages.push(message);
+        return Promise.resolve({ messageId: message.messageId });
+      },
+    };
+    const notificationOptions = {
+      enabled: true,
+      from: 'SettleFlow <coderpraveengupta@gmail.com>',
+      mailTransport,
+    };
+    await notifyPaymentRecorded(
+      { orderId: order.id, paymentId: partialPaymentId, userId: currentUserId },
+      notificationOptions,
+    );
+    await notifyPaymentRecorded(
+      { orderId: order.id, paymentId: partialPaymentId, userId: currentUserId },
+      notificationOptions,
+    );
+    expect(sentMessages).toHaveLength(1);
+    expect(sentMessages[0]).toMatchObject({
+      from: 'SettleFlow <coderpraveengupta@gmail.com>',
+      subject: expect.stringContaining(order.orderNumber),
+      to: 'payments@example.com',
     });
-    await notifyPaymentRecorded({
-      orderId: order.id,
-      paymentId: partialPaymentId,
-      userId: currentUserId,
-    });
+    expect(sentMessages[0]?.messageId).toMatch(/^<[a-f0-9]{64}@kindratech\.co>$/);
     expect(
       await prisma.notificationDelivery.count({
         where: { eventKey: `payment-recorded-${partialPaymentId}` },
       }),
     ).toBe(1);
 
-    const lockedEdit = await agent.patch(`/api/v1/orders/${order.id}`).send(validOrder);
+    const lockedEdit = await agent
+      .patch(`/api/v1/orders/${order.id}`)
+      .send({ ...validOrder, customerId: order.customerId });
     expect(lockedEdit.status).toBe(409);
     expect(lockedEdit.body.error.code).toBe('ORDER_LOCKED');
     const lockedDelete = await agent.delete(`/api/v1/orders/${order.id}`);
@@ -381,6 +490,28 @@ describe('orders and settlements', () => {
       status: 'paid',
     });
     expect(paid.body.data.payments).toHaveLength(2);
+    const finalPaymentId = (paid.body.data.payments as Array<{ id: string }>).find(
+      (payment) => payment.id !== partialPaymentId,
+    )?.id;
+    expect(finalPaymentId).toBeTruthy();
+    const failingTransport: MailTransport = {
+      sendMail: () => Promise.reject(new Error('SMTP unavailable')),
+    };
+    await expect(
+      notifyPaymentRecorded(
+        { orderId: order.id, paymentId: finalPaymentId!, userId: currentUserId },
+        {
+          enabled: true,
+          from: 'SettleFlow <coderpraveengupta@gmail.com>',
+          mailTransport: failingTransport,
+        },
+      ),
+    ).rejects.toThrow('SMTP unavailable');
+    expect(
+      await prisma.notificationDelivery.findUnique({
+        where: { eventKey: `payment-recorded-${finalPaymentId}` },
+      }),
+    ).toMatchObject({ status: 'failed', errorMessage: 'SMTP unavailable' });
 
     const extra = await agent.post(`/api/v1/orders/${order.id}/payments`).send({
       amountCents: 100,
@@ -443,7 +574,7 @@ describe('orders and settlements', () => {
     const download = await owner.get(`/api/v1/exports/${exportId}/download`);
     expect(download.status).toBe(200);
     expect(download.headers['content-type']).toContain('text/csv');
-    expect(download.text).toContain('Order number,Customer,Due date');
+    expect(download.text).toContain('Order number,Customer,Customer mobile,Due date');
     expect(download.text).toContain(order.orderNumber);
   });
 });

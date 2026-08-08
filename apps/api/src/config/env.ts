@@ -39,9 +39,13 @@ const envSchema = z
     READ_AFTER_WRITE_SECONDS: z.coerce.number().int().min(1).max(300).default(10),
     READ_DATABASE_URL: optionalString,
     REDIS_URL: z.string().min(1).default('redis://127.0.0.1:6379'),
-    RESEND_API_KEY: optionalString,
     SESSION_COOKIE_NAME: z.string().min(1).max(64).default('settleflow_session'),
     SESSION_TTL_DAYS: z.coerce.number().int().min(1).max(90).default(7),
+    SMTP_HOST: z.string().min(1).default('smtp.gmail.com'),
+    SMTP_PASSWORD: optionalString,
+    SMTP_PORT: z.coerce.number().int().min(1).max(65_535).default(465),
+    SMTP_SECURE: booleanFromString.default(true),
+    SMTP_USER: optionalString,
     S3_ACCESS_KEY_ID: optionalString,
     S3_BUCKET_NAME: optionalString,
     S3_ENDPOINT_URL: optionalUrl,
@@ -73,10 +77,10 @@ const envSchema = z
       });
     }
 
-    if (value.EMAIL_ENABLED && (!value.RESEND_API_KEY || !value.EMAIL_FROM)) {
+    if (value.EMAIL_ENABLED && (!value.SMTP_USER || !value.SMTP_PASSWORD || !value.EMAIL_FROM)) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
-        message: 'RESEND_API_KEY and EMAIL_FROM are required when EMAIL_ENABLED=true.',
+        message: 'SMTP_USER, SMTP_PASSWORD and EMAIL_FROM are required when EMAIL_ENABLED=true.',
         path: ['EMAIL_ENABLED'],
       });
     }

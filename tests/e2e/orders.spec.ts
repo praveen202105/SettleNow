@@ -33,9 +33,16 @@ test('creates and settles a $1,000 order without allowing overpayment', async ({
     .getByRole('link', { name: /New Order/ })
     .first()
     .click();
+  await page.setViewportSize({ width: 320, height: 800 });
+  await page.getByRole('combobox', { name: 'Customer' }).click();
+  await page.getByRole('button', { name: 'Add new customer' }).click();
+  await page.getByLabel('Customer name').fill('Northstar Labs');
+  await page.getByLabel('Mobile number').fill('+91 98765-43210');
+  await expectNoHorizontalOverflow(page);
+  await page.getByRole('button', { name: 'Add customer' }).click();
+  await expect(page.getByRole('combobox', { name: 'Customer' })).toContainText('Northstar Labs');
   await page.setViewportSize({ width: 768, height: 900 });
   await expectNoHorizontalOverflow(page);
-  await page.getByLabel('Customer name').fill('Northstar Labs');
   await page.getByLabel('Due date').fill('2099-12-31');
   await page.getByLabel('Description').fill('Annual subscription');
   await page.getByLabel('Quantity').fill('1');
@@ -45,6 +52,19 @@ test('creates and settles a $1,000 order without allowing overpayment', async ({
   await expect(page.getByRole('heading', { name: /ORD-/ })).toBeVisible();
   const orderId = new URL(page.url()).pathname.split('/').at(-1);
   expect(orderId).toBeTruthy();
+  await expect(page.getByText('+919876543210', { exact: true })).toBeVisible();
+
+  await page.getByRole('link', { name: 'New Order' }).click();
+  await page.getByRole('combobox', { name: 'Customer' }).click();
+  await page.getByRole('option', { name: /Northstar Labs/ }).click();
+  await expect(page.getByRole('combobox', { name: 'Customer' })).toContainText('+919876543210');
+  await page.getByLabel('Due date').fill('2099-12-31');
+  await page.getByLabel('Description').fill('Follow-up service');
+  await page.getByLabel('Quantity').fill('1');
+  await page.getByLabel('Unit price').fill('100.00');
+  await page.getByRole('button', { name: 'Create order' }).click();
+  await expect(page.getByRole('heading', { name: /ORD-/ })).toBeVisible();
+  await page.goto(`/orders/${orderId}`);
 
   await page.getByRole('button', { name: 'Record payment' }).first().click();
   await page.getByLabel('Amount').fill('400.00');

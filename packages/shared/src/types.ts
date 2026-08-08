@@ -33,6 +33,14 @@ export interface GoogleAuthorizationResponse {
   authorizationUrl: string;
 }
 
+export interface CustomerResponse {
+  createdAt: string;
+  id: string;
+  mobile: string;
+  name: string;
+  updatedAt: string;
+}
+
 export interface LineItemResponse {
   description: string;
   id: string;
@@ -54,6 +62,8 @@ export interface OrderResponse {
   amountPaidCents: number;
   createdAt: string;
   customer: string;
+  customerId: string | null;
+  customerMobile: string | null;
   dueDate: string;
   id: string;
   isLocked: boolean;

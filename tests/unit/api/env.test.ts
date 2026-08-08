@@ -83,4 +83,29 @@ describe('environment configuration', () => {
       }).GOOGLE_OIDC_ISSUER,
     ).toBe('http://127.0.0.1:4010');
   });
+
+  it('requires complete SMTP credentials only when email is enabled', () => {
+    expect(() =>
+      parseEnvironment({
+        DATABASE_URL: databaseUrl,
+        EMAIL_ENABLED: 'true',
+        EMAIL_FROM: 'SettleFlow <coderpraveengupta@gmail.com>',
+      }),
+    ).toThrow('SMTP_USER, SMTP_PASSWORD and EMAIL_FROM are required when EMAIL_ENABLED=true.');
+
+    expect(
+      parseEnvironment({
+        DATABASE_URL: databaseUrl,
+        EMAIL_ENABLED: 'true',
+        EMAIL_FROM: 'SettleFlow <coderpraveengupta@gmail.com>',
+        SMTP_PASSWORD: 'app-password',
+        SMTP_USER: 'coderpraveengupta@gmail.com',
+      }),
+    ).toMatchObject({
+      EMAIL_ENABLED: true,
+      SMTP_HOST: 'smtp.gmail.com',
+      SMTP_PORT: 465,
+      SMTP_SECURE: true,
+    });
+  });
 });

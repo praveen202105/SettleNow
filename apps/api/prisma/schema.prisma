@@ -15,12 +15,28 @@ model User {
   createdAt              DateTime               @default(now()) @map("created_at")
   updatedAt              DateTime               @updatedAt @map("updated_at")
   authIdentities         AuthIdentity[]
+  customers              Customer[]
   orders                 Order[]
   auditEvents            AuditEvent[]
   exportJobs             ExportJob[]
   notificationDeliveries NotificationDelivery[]
 
   @@map("users")
+}
+
+model Customer {
+  id        String   @id @default(uuid())
+  name      String
+  mobile    String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  userId    String   @map("user_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  orders    Order[]
+
+  @@unique([userId, mobile])
+  @@index([userId, name])
+  @@map("customers")
 }
 
 model AuthIdentity {
@@ -40,20 +56,24 @@ model AuthIdentity {
 }
 
 model Order {
-  id        String      @id @default(uuid())
-  publicId  Int         @unique @default(autoincrement()) @map("public_id")
-  customer  String
-  dueDate   DateTime    @map("due_date") @db.Date
-  createdAt DateTime    @default(now()) @map("created_at")
-  updatedAt DateTime    @updatedAt @map("updated_at")
-  deletedAt DateTime?   @map("deleted_at")
-  userId    String      @map("user_id")
-  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  lineItems OrderItem[]
-  payments  Payment[]
-  auditEvents AuditEvent[]
+  id                     String                 @id @default(uuid())
+  publicId               Int                    @unique @default(autoincrement()) @map("public_id")
+  customer               String
+  customerMobile         String?                @map("customer_mobile")
+  customerId             String?                @map("customer_id")
+  customerRecord         Customer?              @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  dueDate                 DateTime               @map("due_date") @db.Date
+  createdAt               DateTime               @default(now()) @map("created_at")
+  updatedAt               DateTime               @updatedAt @map("updated_at")
+  deletedAt               DateTime?              @map("deleted_at")
+  userId                  String                 @map("user_id")
+  user                    User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lineItems               OrderItem[]
+  payments                Payment[]
+  auditEvents             AuditEvent[]
   notificationDeliveries NotificationDelivery[]
 
+  @@index([customerId])
   @@index([userId, dueDate])
   @@index([userId, createdAt])
   @@index([userId, deletedAt])

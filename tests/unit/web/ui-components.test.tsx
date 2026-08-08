@@ -18,7 +18,9 @@ import { Select } from '../../../apps/web/src/components/ui/Select';
 import { activityLabel } from '../../../apps/web/src/features/activity/ActivityTimeline';
 import { AuthModeSwitch, AuthPage } from '../../../apps/web/src/features/auth/AuthPage';
 import { authQueryKey } from '../../../apps/web/src/features/auth/hooks';
+import { CustomerCombobox } from '../../../apps/web/src/features/customers/CustomerCombobox';
 import { SecurityPage } from '../../../apps/web/src/features/settings/SecurityPage';
+import type { CustomerResponse } from '../../../packages/shared/src/types';
 
 afterEach(() => {
   cleanup();
@@ -205,5 +207,74 @@ describe('Google authentication UI', () => {
 
     expect(await screen.findByText(/Google is your only sign-in method/)).toBeVisible();
     expect(await screen.findByRole('button', { name: 'Disconnect' })).toBeDisabled();
+  });
+});
+
+describe('customer directory UI', () => {
+  const customer: CustomerResponse = {
+    createdAt: '2026-08-08T00:00:00.000Z',
+    id: 'customer-1',
+    mobile: '+919876543210',
+    name: 'Acme Corporation',
+    updatedAt: '2026-08-08T00:00:00.000Z',
+  };
+
+  function CustomerHarness() {
+    const [selected, setSelected] = useState<CustomerResponse | null>(null);
+    return <CustomerCombobox value={selected} onValueChange={setSelected} />;
+  }
+
+  it('searches and selects an existing customer with the keyboard', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(() =>
+      jsonResponse({
+        data: [customer],
+        meta: { page: 1, pageSize: 20, total: 1, totalPages: 1 },
+      }),
+    );
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const user = userEvent.setup();
+    render(
+      <QueryClientProvider client={client}>
+        <CustomerHarness />
+      </QueryClientProvider>,
+    );
+
+    await user.click(screen.getByRole('combobox', { name: 'Customer' }));
+    const search = await screen.findByRole('textbox', { name: 'Search customers' });
+    await user.type(search, 'Acme');
+    await screen.findByRole('option', { name: /Acme Corporation/ });
+    await user.keyboard('{ArrowDown}{Enter}');
+
+    expect(screen.getByRole('combobox', { name: 'Customer' })).toHaveTextContent(
+      'Acme Corporation',
+    );
+    expect(screen.getByRole('combobox', { name: 'Customer' })).toHaveTextContent('+919876543210');
+  });
+
+  it('creates and automatically selects a new customer', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input, options) => {
+      if (options?.method === 'POST') return jsonResponse({ data: customer }, 201);
+      return jsonResponse({
+        data: [],
+        meta: { page: 1, pageSize: 20, total: 0, totalPages: 1 },
+      });
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const user = userEvent.setup();
+    render(
+      <QueryClientProvider client={client}>
+        <CustomerHarness />
+      </QueryClientProvider>,
+    );
+
+    await user.click(screen.getByRole('combobox', { name: 'Customer' }));
+    await user.click(await screen.findByRole('button', { name: 'Add new customer' }));
+    await user.type(screen.getByLabelText('Customer name'), customer.name);
+    await user.type(screen.getByLabelText('Mobile number'), customer.mobile);
+    await user.click(screen.getByRole('button', { name: 'Add customer' }));
+
+    await waitFor(() =>
+      expect(screen.getByRole('combobox', { name: 'Customer' })).toHaveTextContent(customer.name),
+    );
   });
 });

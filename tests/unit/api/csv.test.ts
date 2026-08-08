@@ -10,6 +10,8 @@ describe('ordersToCsv', () => {
         amountPaidCents: 4_000,
         createdAt: '2026-08-08T00:00:00.000Z',
         customer: 'Acme, "Global"',
+        customerId: 'customer-1',
+        customerMobile: '+919876543210',
         dueDate: '2026-08-31',
         id: 'order-1',
         isLocked: true,
@@ -23,6 +25,8 @@ describe('ordersToCsv', () => {
 
     expect(csv).toContain('100.00,40.00,60.00');
     expect(csv).toContain('"Acme, ""Global"""');
+    expect(csv).toContain('Customer mobile');
+    expect(csv).toContain('+919876543210');
     expect(csv.endsWith('\r\n')).toBe(true);
   });
 });

@@ -130,8 +130,9 @@ export function OrderDetailPage() {
                 </div>
               </div>
             </CardHeader>
-            <CardContent className="grid gap-5 pt-5 sm:grid-cols-3 sm:pt-6">
+            <CardContent className="grid gap-5 pt-5 sm:grid-cols-2 lg:grid-cols-4 sm:pt-6">
               <InfoItem label="Customer" value={data.customer} />
+              <InfoItem label="Mobile" value={data.customerMobile ?? 'Not available'} mono />
               <InfoItem label="Order number" value={data.orderNumber} mono />
               <InfoItem label="Due date" value={formatDate(data.dueDate)} />
             </CardContent>

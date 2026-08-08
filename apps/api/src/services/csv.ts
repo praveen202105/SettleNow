@@ -14,6 +14,7 @@ export function ordersToCsv(orders: OrderListItem[]): string {
     [
       'Order number',
       'Customer',
+      'Customer mobile',
       'Due date',
       'Status',
       'Currency',
@@ -27,6 +28,7 @@ export function ordersToCsv(orders: OrderListItem[]): string {
     ...orders.map((order) => [
       order.orderNumber,
       order.customer,
+      order.customerMobile ?? '',
       order.dueDate,
       order.status,
       'USD',

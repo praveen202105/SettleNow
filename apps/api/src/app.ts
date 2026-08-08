@@ -16,6 +16,7 @@ import { errorHandler, notFoundHandler } from './http/errors.js';
 import { logger } from './lib/logger.js';
 import { createAuthRouter, type AuthRouterOptions } from './routes/auth.js';
 import { activityRouter } from './routes/activity.js';
+import { customersRouter } from './routes/customers.js';
 import { exportsRouter } from './routes/exports.js';
 import { healthRouter } from './routes/health.js';
 import { ordersRouter } from './routes/orders.js';
@@ -69,6 +70,7 @@ export function createApp(options: AuthRouterOptions = {}) {
   api.use('/health', healthRouter);
   api.use('/auth', createAuthRouter(options));
   api.use('/activity', activityRouter);
+  api.use('/customers', customersRouter);
   api.use('/exports', exportsRouter);
   api.use('/orders', ordersRouter);
   app.use('/api/v1', api);

@@ -3,7 +3,6 @@ import { useMutation } from '@tanstack/react-query';
 import {
   ArrowRight,
   CheckCircle2,
-  CreditCard,
   LockKeyhole,
   Mail,
   ShieldCheck,
@@ -23,6 +22,7 @@ import {
 } from '@settleflow/shared';
 
 import { Alert } from '../../components/ui/Alert';
+import { BrandMark } from '../../components/brand/BrandMark';
 import { Button } from '../../components/ui/Button';
 import { Field, FieldDescription, FieldError, FieldLabel } from '../../components/ui/Field';
 import { InputGroup, InputGroupAddon, InputGroupInput } from '../../components/ui/InputGroup';
@@ -46,14 +46,7 @@ export function AuthPage({ mode }: { mode: AuthMode }) {
 function Brand({ inverse = false }: { inverse?: boolean }) {
   return (
     <div className="inline-flex items-center gap-3">
-      <span
-        className={cn(
-          'flex size-11 items-center justify-center rounded-xl shadow-sm',
-          inverse ? 'bg-white/15 text-white ring-1 ring-white/20' : 'bg-blue-600 text-white',
-        )}
-      >
-        <CreditCard className="size-5" aria-hidden="true" />
-      </span>
+      <BrandMark className={cn('size-11', inverse && 'text-white/15 ring-1 ring-white/20')} />
       <span
         className={cn(
           'text-xl font-bold tracking-tight',

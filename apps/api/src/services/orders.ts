@@ -78,6 +78,8 @@ export function presentOrder(order: OrderWithRelations, today = todayIsoUtc()): 
     id: order.id,
     orderNumber: orderNumber(order.publicId),
     customer: order.customer,
+    customerId: order.customerId,
+    customerMobile: order.customerMobile,
     dueDate: dateOnly(order.dueDate),
     createdAt: order.createdAt.toISOString(),
     updatedAt: order.updatedAt.toISOString(),
@@ -92,6 +94,18 @@ export function presentOrder(order: OrderWithRelations, today = todayIsoUtc()): 
     }),
     isLocked: payments.length > 0,
   };
+}
+
+async function findOwnedCustomer(db: DbClient, userId: string, id: string) {
+  const customer = await db.customer.findFirst({ where: { id, userId } });
+  if (!customer) {
+    throw new AppError(
+      404,
+      'CUSTOMER_NOT_FOUND',
+      'Customer not found. Refresh the customer list and select an available customer.',
+    );
+  }
+  return customer;
 }
 
 async function findOwnedOrder(
@@ -134,9 +148,12 @@ export async function createOrder(
   requestId?: string,
 ): Promise<OrderResponse> {
   const order = await prisma.$transaction(async (transaction) => {
+    const customer = await findOwnedCustomer(transaction, userId, input.customerId);
     const created = await transaction.order.create({
       data: {
-        customer: input.customer,
+        customer: customer.name,
+        customerId: customer.id,
+        customerMobile: customer.mobile,
         dueDate: parseDateOnly(input.dueDate),
         userId,
         lineItems: {
@@ -184,11 +201,15 @@ export async function updateOrder(
       );
     }
 
+    const customer = await findOwnedCustomer(transaction, userId, input.customerId);
+
     await transaction.orderItem.deleteMany({ where: { orderId: id } });
     const updated = await transaction.order.update({
       where: { id },
       data: {
-        customer: input.customer,
+        customer: customer.name,
+        customerId: customer.id,
+        customerMobile: customer.mobile,
         dueDate: parseDateOnly(input.dueDate),
         lineItems: {
           create: input.lineItems.map((item, position) => ({
@@ -327,6 +348,8 @@ interface OrderListRow {
   amountPaidCents: bigint;
   createdAt: Date;
   customer: string;
+  customerId: string | null;
+  customerMobile: string | null;
   dueDate: Date;
   id: string;
   orderTotalCents: bigint;
@@ -343,6 +366,8 @@ function financialCte(userId: string, today: string): Prisma.Sql {
         o."id",
         o."public_id" AS "publicId",
         o."customer",
+        o."customer_id" AS "customerId",
+        o."customer_mobile" AS "customerMobile",
         o."due_date" AS "dueDate",
         o."created_at" AS "createdAt",
         o."updated_at" AS "updatedAt",
@@ -385,7 +410,11 @@ function listFilters(query: OrderListQuery): Prisma.Sql {
       ${query.status ? Prisma.sql`AND "status" = ${query.status}` : Prisma.empty}
       ${
         search
-          ? Prisma.sql`AND ("customer" ILIKE ${search} OR CONCAT('ORD-', "publicId") ILIKE ${search})`
+          ? Prisma.sql`AND (
+              "customer" ILIKE ${search}
+              OR COALESCE("customerMobile", '') ILIKE ${search}
+              OR CONCAT('ORD-', "publicId") ILIKE ${search}
+            )`
           : Prisma.empty
       }
   `;
@@ -434,6 +463,8 @@ export async function listOrders(
     id: row.id,
     orderNumber: orderNumber(row.publicId),
     customer: row.customer,
+    customerId: row.customerId,
+    customerMobile: row.customerMobile,
     dueDate: dateOnly(row.dueDate),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),

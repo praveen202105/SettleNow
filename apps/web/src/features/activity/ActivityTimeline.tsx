@@ -20,6 +20,7 @@ const actionLabels: Record<AuditAction, string> = {
   'auth.signup': 'Account created',
   'auth.google.linked': 'Google connected',
   'auth.google.unlinked': 'Google disconnected',
+  'customer.created': 'Customer added',
   'export.completed': 'Export completed',
   'export.downloaded': 'Export downloaded',
   'export.requested': 'Export requested',
