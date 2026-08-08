@@ -16,17 +16,17 @@ let s3Client: S3Client | undefined;
 
 function client(): S3Client {
   s3Client ??= new S3Client({
-    forcePathStyle: env.AWS_FORCE_PATH_STYLE,
-    region: env.AWS_DEFAULT_REGION,
-    ...(env.AWS_ACCESS_KEY_ID && env.AWS_SECRET_ACCESS_KEY
+    forcePathStyle: env.S3_FORCE_PATH_STYLE,
+    region: env.S3_REGION,
+    ...(env.S3_ACCESS_KEY_ID && env.S3_SECRET_ACCESS_KEY
       ? {
           credentials: {
-            accessKeyId: env.AWS_ACCESS_KEY_ID,
-            secretAccessKey: env.AWS_SECRET_ACCESS_KEY,
+            accessKeyId: env.S3_ACCESS_KEY_ID,
+            secretAccessKey: env.S3_SECRET_ACCESS_KEY,
           },
         }
       : {}),
-    ...(env.AWS_ENDPOINT_URL ? { endpoint: env.AWS_ENDPOINT_URL } : {}),
+    ...(env.S3_ENDPOINT_URL ? { endpoint: env.S3_ENDPOINT_URL } : {}),
   });
   return s3Client;
 }
@@ -49,7 +49,7 @@ export async function putExportObject(key: string, content: string): Promise<voi
   await client().send(
     new PutObjectCommand({
       Body: content,
-      Bucket: env.AWS_S3_BUCKET_NAME!,
+      Bucket: env.S3_BUCKET_NAME!,
       ContentType: 'text/csv; charset=utf-8',
       Key: key,
     }),
@@ -59,7 +59,7 @@ export async function putExportObject(key: string, content: string): Promise<voi
 export async function getExportObject(key: string): Promise<Readable> {
   if (env.STORAGE_DRIVER === 'local') return createReadStream(localPath(key));
   const result = await client().send(
-    new GetObjectCommand({ Bucket: env.AWS_S3_BUCKET_NAME!, Key: key }),
+    new GetObjectCommand({ Bucket: env.S3_BUCKET_NAME!, Key: key }),
   );
   if (!result.Body) throw new Error('Export object has no body.');
   if (result.Body instanceof Readable) return result.Body;
@@ -71,5 +71,5 @@ export async function deleteExportObject(key: string): Promise<void> {
     await rm(localPath(key), { force: true });
     return;
   }
-  await client().send(new DeleteObjectCommand({ Bucket: env.AWS_S3_BUCKET_NAME!, Key: key }));
+  await client().send(new DeleteObjectCommand({ Bucket: env.S3_BUCKET_NAME!, Key: key }));
 }

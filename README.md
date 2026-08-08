@@ -134,13 +134,17 @@ SESSION_COOKIE_NAME=settleflow_session
 SESSION_TTL_DAYS=7
 AUTH_RATE_LIMIT_MAX=20
 STORAGE_DRIVER=s3
-AWS_ENDPOINT_URL=<bucket-endpoint>
-AWS_S3_BUCKET_NAME=<bucket-name>
+S3_ENDPOINT_URL=<bucket-endpoint>
+S3_REGION=auto
+S3_BUCKET_NAME=<bucket-name>
+S3_ACCESS_KEY_ID=<sealed-access-key>
+S3_SECRET_ACCESS_KEY=<sealed-secret-key>
+S3_FORCE_PATH_STYLE=false
 EMAIL_ENABLED=false
 RESEND_API_KEY=<sealed-secret>
 EMAIL_FROM=SettleFlow <verified@example.com>
 ```
 
-The API uses pre-deploy command `pnpm db:deploy` and start command `pnpm start:prod`. The worker starts with `pnpm start:worker`. Export objects expire after 24 hours and are downloaded only through authenticated, ownership-checked API routes. Set `EMAIL_ENABLED=true` only after configuring a Resend API key and verified `EMAIL_FROM` sender.
+The provider-neutral `S3_*` variables configure Railway's S3-compatible bucket; they do not imply AWS infrastructure. The API uses pre-deploy command `pnpm db:deploy` and start command `pnpm start:prod`. The worker starts with `pnpm start:worker`. Export objects expire after 24 hours and are downloaded only through authenticated, ownership-checked API routes. Set `EMAIL_ENABLED=true` only after configuring a Resend API key and verified `EMAIL_FROM` sender.
 
 Production URL: [https://web-api-production-af27.up.railway.app](https://web-api-production-af27.up.railway.app)
