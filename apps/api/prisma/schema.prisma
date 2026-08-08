@@ -1,0 +1,143 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                     String                 @id @default(uuid())
+  email                  String                 @unique
+  displayName            String                 @map("display_name")
+  passwordHash           String                 @map("password_hash")
+  createdAt              DateTime               @default(now()) @map("created_at")
+  updatedAt              DateTime               @updatedAt @map("updated_at")
+  orders                 Order[]
+  auditEvents            AuditEvent[]
+  exportJobs             ExportJob[]
+  notificationDeliveries NotificationDelivery[]
+
+  @@map("users")
+}
+
+model Order {
+  id        String      @id @default(uuid())
+  publicId  Int         @unique @default(autoincrement()) @map("public_id")
+  customer  String
+  dueDate   DateTime    @map("due_date") @db.Date
+  createdAt DateTime    @default(now()) @map("created_at")
+  updatedAt DateTime    @updatedAt @map("updated_at")
+  deletedAt DateTime?   @map("deleted_at")
+  userId    String      @map("user_id")
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lineItems OrderItem[]
+  payments  Payment[]
+  auditEvents AuditEvent[]
+  notificationDeliveries NotificationDelivery[]
+
+  @@index([userId, dueDate])
+  @@index([userId, createdAt])
+  @@index([userId, deletedAt])
+  @@map("orders")
+}
+
+model OrderItem {
+  id             String @id @default(uuid())
+  description    String
+  quantity       Int
+  unitPriceCents BigInt @map("unit_price_cents")
+  position       Int
+  orderId        String @map("order_id")
+  order          Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId, position])
+  @@map("order_items")
+}
+
+model Payment {
+  id          String   @id @default(uuid())
+  amountCents BigInt   @map("amount_cents")
+  date        DateTime @db.Date
+  note        String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  orderId     String   @map("order_id")
+  order       Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId, date])
+  @@map("payments")
+}
+
+model AuditEvent {
+  id         String   @id @default(uuid())
+  action     String
+  entityType String   @map("entity_type")
+  entityId   String?  @map("entity_id")
+  metadata   Json     @default("{}")
+  requestId  String?  @map("request_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+  userId     String   @map("user_id")
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  orderId    String?  @map("order_id")
+  order      Order?   @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([orderId, createdAt])
+  @@map("audit_events")
+}
+
+model OutboxEvent {
+  id          String    @id @default(uuid())
+  topic       String
+  payload     Json
+  attempts    Int       @default(0)
+  availableAt DateTime  @default(now()) @map("available_at")
+  publishedAt DateTime? @map("published_at")
+  lastError   String?   @map("last_error")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@index([publishedAt, availableAt])
+  @@map("outbox_events")
+}
+
+model ExportJob {
+  id           String    @id @default(uuid())
+  status       String    @default("queued")
+  query        Json
+  objectKey    String?   @map("object_key")
+  fileName     String?   @map("file_name")
+  errorMessage String?   @map("error_message")
+  requestedAt  DateTime  @default(now()) @map("requested_at")
+  startedAt    DateTime? @map("started_at")
+  completedAt  DateTime? @map("completed_at")
+  expiresAt    DateTime? @map("expires_at")
+  userId       String    @map("user_id")
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, requestedAt])
+  @@index([status, requestedAt])
+  @@index([expiresAt])
+  @@map("export_jobs")
+}
+
+model NotificationDelivery {
+  id                String    @id @default(uuid())
+  eventKey          String    @unique @map("event_key")
+  type              String
+  status            String    @default("pending")
+  recipient         String
+  providerMessageId String?   @map("provider_message_id")
+  errorMessage      String?   @map("error_message")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  sentAt            DateTime? @map("sent_at")
+  userId            String    @map("user_id")
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  orderId           String?   @map("order_id")
+  order             Order?    @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([orderId, createdAt])
+  @@index([status, createdAt])
+  @@map("notification_deliveries")
+}
