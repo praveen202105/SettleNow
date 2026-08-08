@@ -27,7 +27,7 @@
     "start:worker": "pnpm --filter @settleflow/api start:worker",
     "test": "pnpm --filter @settleflow/shared test && pnpm --filter @settleflow/api test && pnpm --filter @settleflow/web test",
     "test:e2e": "playwright test",
-    "typecheck": "pnpm --filter @settleflow/shared typecheck && pnpm --filter @settleflow/api typecheck && pnpm --filter @settleflow/web typecheck && pnpm exec tsc -p tests/tsconfig.json --noEmit"
+    "typecheck": "pnpm --filter @settleflow/shared build && pnpm --filter @settleflow/api typecheck && pnpm --filter @settleflow/web typecheck && pnpm exec tsc -p tests/tsconfig.json --noEmit"
   },
   "devDependencies": {
     "@eslint/js": "^9.32.0",
