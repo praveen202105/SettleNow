@@ -13,6 +13,10 @@ export const AUDIT_ACTIONS = [
   'order.updated',
   'order.deleted',
   'payment.recorded',
+  'payment.link.created',
+  'payment.link.revoked',
+  'payment.checkout.started',
+  'payment.checkout.failed',
   'export.requested',
   'export.completed',
   'export.downloaded',
@@ -22,7 +26,7 @@ export const AUDIT_ACTIONS = [
 export const AUTH_METHODS = ['password', 'google'] as const;
 export const GOOGLE_AUTH_INTENTS = ['signin', 'link'] as const;
 
-export const MAX_MONEY_CENTS = 9_000_000_000_000;
+export const MAX_MONEY_MINOR = 9_000_000_000_000;
 export const MAX_LINE_ITEMS = 100;
 export const DEFAULT_PAGE_SIZE = 10;
 export const MAX_PAGE_SIZE = 100;

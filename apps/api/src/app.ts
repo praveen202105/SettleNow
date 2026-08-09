@@ -20,8 +20,20 @@ import { customersRouter } from './routes/customers.js';
 import { exportsRouter } from './routes/exports.js';
 import { healthRouter } from './routes/health.js';
 import { ordersRouter } from './routes/orders.js';
+import {
+  createOwnerPaymentRouter,
+  createPaymentAttemptsRouter,
+  createPaymentsRouter,
+} from './routes/payments.js';
+import { createPublicPaymentsRouter } from './routes/publicPayments.js';
+import { razorpayWebhookHandler } from './routes/paymentWebhooks.js';
+import type { PaymentProvider } from './services/razorpay.js';
 
-export function createApp(options: AuthRouterOptions = {}) {
+export interface AppOptions extends AuthRouterOptions {
+  paymentProvider?: PaymentProvider;
+}
+
+export function createApp(options: AppOptions = {}) {
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', env.TRUST_PROXY ? 1 : false);
@@ -38,10 +50,25 @@ export function createApp(options: AuthRouterOptions = {}) {
       serializers: {
         req(request: IncomingMessage) {
           const serialized = stdSerializers.req(request);
-          if (serialized.url?.startsWith('/api/v1/auth/google/callback')) {
-            return { ...serialized, url: '/api/v1/auth/google/callback' };
+          const headers = { ...serialized.headers };
+          const referer = headers.referer;
+          if (typeof referer === 'string') {
+            try {
+              const parsed = new URL(referer);
+              if (parsed.pathname.startsWith('/pay/')) {
+                headers.referer = `${parsed.origin}/pay/[redacted]`;
+              }
+            } catch {
+              if (referer.includes('/pay/')) headers.referer = '[redacted-payment-link]';
+            }
           }
-          return serialized;
+          if (serialized.url?.startsWith('/api/v1/auth/google/callback')) {
+            return { ...serialized, headers, url: '/api/v1/auth/google/callback' };
+          }
+          if (serialized.url?.startsWith('/pay/')) {
+            return { ...serialized, headers, url: '/pay/[redacted]' };
+          }
+          return { ...serialized, headers };
         },
       },
     }),
@@ -53,8 +80,10 @@ export function createApp(options: AuthRouterOptions = {}) {
           ? {
               directives: {
                 defaultSrc: ["'self'"],
-                imgSrc: ["'self'", 'data:'],
-                scriptSrc: ["'self'"],
+                connectSrc: ["'self'", 'https://api.razorpay.com', 'https://*.razorpay.com'],
+                frameSrc: ["'self'", 'https://api.razorpay.com', 'https://*.razorpay.com'],
+                imgSrc: ["'self'", 'data:', 'https://*.razorpay.com'],
+                scriptSrc: ["'self'", 'https://checkout.razorpay.com'],
                 styleSrc: ["'self'", "'unsafe-inline'"],
               },
             }
@@ -62,6 +91,11 @@ export function createApp(options: AuthRouterOptions = {}) {
     }),
   );
   app.use(compression());
+  app.post(
+    '/api/v1/webhooks/razorpay',
+    express.raw({ limit: '256kb', type: 'application/json' }),
+    razorpayWebhookHandler,
+  );
   app.use(express.json({ limit: '100kb' }));
   app.use(cookieParser());
   app.use(enforceOrigin);
@@ -72,7 +106,11 @@ export function createApp(options: AuthRouterOptions = {}) {
   api.use('/activity', activityRouter);
   api.use('/customers', customersRouter);
   api.use('/exports', exportsRouter);
+  api.use('/payments', createPaymentsRouter());
+  api.use('/payment-attempts', createPaymentAttemptsRouter(options.paymentProvider));
+  api.use('/public', createPublicPaymentsRouter(options.paymentProvider));
   api.use('/orders', ordersRouter);
+  api.use('/orders', createOwnerPaymentRouter(options.paymentProvider));
   app.use('/api/v1', api);
 
   if (env.NODE_ENV === 'production') {

@@ -8,11 +8,11 @@ import { toast } from 'sonner';
 import { z } from 'zod';
 
 import {
-  centsToInput,
-  formatUsd,
+  minorToInput,
+  formatInr,
   isIsoDate,
   orderInputSchema,
-  parseMoneyToCents,
+  parseMoneyToMinor,
   type CustomerResponse,
   type OrderInput,
   type OrderResponse,
@@ -44,7 +44,7 @@ const moneyInputSchema = z
   .min(1, 'Unit price is required.')
   .refine((value) => {
     try {
-      parseMoneyToCents(value);
+      parseMoneyToMinor(value);
       return true;
     } catch {
       return false;
@@ -81,7 +81,7 @@ function defaults(order?: OrderResponse): OrderFormValues {
     lineItems: order.lineItems.map((item) => ({
       description: item.description,
       quantity: item.quantity,
-      unitPrice: centsToInput(item.unitPriceCents),
+      unitPrice: minorToInput(item.unitPriceMinor),
     })),
   };
 }
@@ -179,7 +179,7 @@ function OrderForm({ mode, order }: { mode: 'create' | 'edit'; order: OrderRespo
         lineItems: values.lineItems.map((item) => ({
           description: item.description,
           quantity: item.quantity,
-          unitPriceCents: parseMoneyToCents(item.unitPrice),
+          unitPriceMinor: parseMoneyToMinor(item.unitPrice),
         })),
       }),
     );
@@ -189,7 +189,7 @@ function OrderForm({ mode, order }: { mode: 'create' | 'edit'; order: OrderRespo
       return (
         sum +
         (Number.isFinite(item.quantity) ? item.quantity : 0) *
-          parseMoneyToCents(item.unitPrice || '0')
+          parseMoneyToMinor(item.unitPrice || '0')
       );
     } catch {
       return sum;
@@ -301,7 +301,7 @@ function OrderForm({ mode, order }: { mode: 'create' | 'edit'; order: OrderRespo
                 const line = watchedLines[index];
                 let lineTotal = 0;
                 try {
-                  lineTotal = (line?.quantity ?? 0) * parseMoneyToCents(line?.unitPrice || '0');
+                  lineTotal = (line?.quantity ?? 0) * parseMoneyToMinor(line?.unitPrice || '0');
                 } catch {
                   /* validation explains invalid input */
                 }
@@ -356,7 +356,7 @@ function OrderForm({ mode, order }: { mode: 'create' | 'edit'; order: OrderRespo
                         Unit price
                       </FieldLabel>
                       <InputGroup>
-                        <InputGroupAddon aria-hidden="true">$</InputGroupAddon>
+                        <InputGroupAddon aria-hidden="true">₹</InputGroupAddon>
                         <InputGroupInput
                           id={`line-${index}-price`}
                           inputMode="decimal"
@@ -424,8 +424,8 @@ function OrderForm({ mode, order }: { mode: 'create' | 'edit'; order: OrderRespo
   );
 }
 
-function formatSafe(cents: number): string {
-  return Number.isSafeInteger(cents) ? formatUsd(cents) : '$0.00';
+function formatSafe(minor: number): string {
+  return Number.isSafeInteger(minor) ? formatInr(minor) : '₹0.00';
 }
 
 function CenteredState({ children }: { children: React.ReactNode }) {

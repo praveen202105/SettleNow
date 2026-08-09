@@ -5,7 +5,7 @@ import {
   AUDIT_ACTIONS,
   GOOGLE_AUTH_INTENTS,
   MAX_LINE_ITEMS,
-  MAX_MONEY_CENTS,
+  MAX_MONEY_MINOR,
   MAX_PAGE_SIZE,
   ORDER_SORT_FIELDS,
   ORDER_STATUSES,
@@ -68,14 +68,14 @@ export const lineItemInputSchema = z
   .object({
     description: z.string().trim().min(1, 'Description is required.').max(200),
     quantity: z.number().int().min(1).max(100_000),
-    unitPriceCents: z.number().int().min(0).max(MAX_MONEY_CENTS),
+    unitPriceMinor: z.number().int().min(0).max(MAX_MONEY_MINOR),
   })
   .superRefine((item, context) => {
-    if (BigInt(item.quantity) * BigInt(item.unitPriceCents) > BigInt(MAX_MONEY_CENTS)) {
+    if (BigInt(item.quantity) * BigInt(item.unitPriceMinor) > BigInt(MAX_MONEY_MINOR)) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         message: 'Line total exceeds the supported amount.',
-        path: ['unitPriceCents'],
+        path: ['unitPriceMinor'],
       });
     }
   });
@@ -88,10 +88,10 @@ export const orderInputSchema = z
   })
   .superRefine((order, context) => {
     const total = order.lineItems.reduce(
-      (sum, item) => sum + BigInt(item.quantity) * BigInt(item.unitPriceCents),
+      (sum, item) => sum + BigInt(item.quantity) * BigInt(item.unitPriceMinor),
       0n,
     );
-    if (total > BigInt(MAX_MONEY_CENTS)) {
+    if (total > BigInt(MAX_MONEY_MINOR)) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         message: 'Order total exceeds the supported amount.',
@@ -101,9 +101,27 @@ export const orderInputSchema = z
   });
 
 export const paymentInputSchema = z.object({
-  amountCents: z.number().int().min(1).max(MAX_MONEY_CENTS),
+  amountMinor: z.number().int().min(1).max(MAX_MONEY_MINOR),
   date: isoDateSchema,
   note: z.string().trim().max(500).optional().default(''),
+});
+
+export const paymentAttemptInputSchema = z.object({
+  amountMinor: z
+    .number()
+    .int()
+    .min(100, 'Online payments must be at least ₹1.')
+    .max(MAX_MONEY_MINOR),
+});
+
+export const paymentLinkSessionSchema = z.object({
+  token: z.string().min(32).max(256),
+});
+
+export const paymentConfirmationSchema = z.object({
+  razorpayOrderId: z.string().trim().min(1).max(100),
+  razorpayPaymentId: z.string().trim().min(1).max(100),
+  razorpaySignature: z.string().regex(/^[a-f0-9]{64}$/i),
 });
 
 export const orderListQuerySchema = z.object({
@@ -142,6 +160,9 @@ export type CustomerListQuery = z.infer<typeof customerListQuerySchema>;
 export type LineItemInput = z.infer<typeof lineItemInputSchema>;
 export type OrderInput = z.infer<typeof orderInputSchema>;
 export type PaymentInput = z.infer<typeof paymentInputSchema>;
+export type PaymentAttemptInput = z.infer<typeof paymentAttemptInputSchema>;
+export type PaymentLinkSessionInput = z.infer<typeof paymentLinkSessionSchema>;
+export type PaymentConfirmationInput = z.infer<typeof paymentConfirmationSchema>;
 export type OrderListQuery = z.infer<typeof orderListQuerySchema>;
 export type OrderExportInput = z.infer<typeof orderExportInputSchema>;
 export type ActivityQuery = z.infer<typeof activityQuerySchema>;

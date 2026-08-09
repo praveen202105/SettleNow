@@ -115,9 +115,9 @@ export async function notifyPaymentRecorded(
     prisma.payment.findUnique({ where: { id: data.paymentId } }),
   ]);
   if (!order || !payment) return;
-  const amount = Number(payment.amountCents);
+  const amount = Number(payment.amountMinor);
   const content = paymentRecordedEmail({
-    amountCents: amount,
+    amountMinor: amount,
     appOrigin: env.APP_ORIGIN,
     orderId: order.id,
     orderNumber: `ORD-${order.publicId}`,
@@ -212,9 +212,9 @@ export async function overdueOrders(): Promise<Array<{ orderId: string; userId: 
       o."deleted_at" IS NULL
       AND o."due_date" < CURRENT_DATE
       AND COALESCE((
-        SELECT SUM(p."amount_cents") FROM "payments" p WHERE p."order_id" = o."id"
+        SELECT SUM(p."amount_minor") FROM "payments" p WHERE p."order_id" = o."id"
       ), 0) < COALESCE((
-        SELECT SUM(oi."quantity" * oi."unit_price_cents") FROM "order_items" oi WHERE oi."order_id" = o."id"
+        SELECT SUM(oi."quantity" * oi."unit_price_minor") FROM "order_items" oi WHERE oi."order_id" = o."id"
       ), 0)
   `);
   return rows;

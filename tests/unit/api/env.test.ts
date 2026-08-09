@@ -66,6 +66,42 @@ describe('environment configuration', () => {
     });
   });
 
+  it('requires complete Razorpay Test Mode credentials only when online payments are enabled', () => {
+    expect(() =>
+      parseEnvironment({
+        DATABASE_URL: databaseUrl,
+        PAYMENTS_ENABLED: 'true',
+      }),
+    ).toThrow(
+      'RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET and RAZORPAY_WEBHOOK_SECRET are required when PAYMENTS_ENABLED=true.',
+    );
+
+    expect(
+      parseEnvironment({
+        DATABASE_URL: databaseUrl,
+        PAYMENTS_ENABLED: 'true',
+        RAZORPAY_KEY_ID: 'rzp_test_settleflow',
+        RAZORPAY_KEY_SECRET: 'test_checkout_secret',
+        RAZORPAY_WEBHOOK_SECRET: 'test_webhook_secret',
+      }),
+    ).toMatchObject({
+      PAYMENT_CURRENCY: 'INR',
+      PAYMENT_MODE: 'test',
+      PAYMENT_PROVIDER: 'razorpay',
+      PAYMENTS_ENABLED: true,
+    });
+  });
+
+  it('does not allow the fake Razorpay adapter outside isolated tests', () => {
+    expect(() =>
+      parseEnvironment({
+        DATABASE_URL: databaseUrl,
+        NODE_ENV: 'production',
+        RAZORPAY_FAKE_PROVIDER: 'true',
+      }),
+    ).toThrow('The fake Razorpay provider is allowed only when NODE_ENV=test.');
+  });
+
   it('allows a non-Google OIDC issuer only for isolated tests', () => {
     expect(() =>
       parseEnvironment({

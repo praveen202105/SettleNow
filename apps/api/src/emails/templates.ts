@@ -1,4 +1,4 @@
-import { formatDate, formatUsd } from '@settleflow/shared';
+import { formatDate, formatInr } from '@settleflow/shared';
 
 export interface EmailContent {
   html: string;
@@ -164,12 +164,12 @@ export function welcomeEmail(input: { appOrigin: string; displayName: string }):
 }
 
 export function paymentRecordedEmail(input: {
-  amountCents: number;
+  amountMinor: number;
   appOrigin: string;
   orderId: string;
   orderNumber: string;
 }): EmailContent {
-  const amount = formatUsd(input.amountCents);
+  const amount = formatInr(input.amountMinor);
   const orderUrl = appLink(input.appOrigin, `/orders/${input.orderId}`);
   return renderEmailLayout({
     accentBackground: '#dcfce7',

@@ -44,32 +44,44 @@ export interface CustomerResponse {
 export interface LineItemResponse {
   description: string;
   id: string;
-  lineTotalCents: number;
+  lineTotalMinor: number;
   quantity: number;
-  unitPriceCents: number;
+  unitPriceMinor: number;
 }
 
+export type Currency = 'INR';
+export type PaymentSource = 'offline' | 'razorpay';
+export type PaymentMode = 'manual' | 'test';
+export type PaymentAttemptStatus =
+  'creating' | 'pending' | 'captured' | 'failed' | 'expired' | 'cancelled' | 'needs_review';
+
 export interface PaymentResponse {
-  amountCents: number;
+  amountMinor: number;
   createdAt: string;
+  currency: Currency;
   date: string;
   id: string;
+  method: string | null;
+  mode: PaymentMode;
   note: string | null;
+  providerPaymentId: string | null;
+  source: PaymentSource;
 }
 
 export interface OrderResponse {
-  amountDueCents: number;
-  amountPaidCents: number;
+  amountDueMinor: number;
+  amountPaidMinor: number;
   createdAt: string;
   customer: string;
   customerId: string | null;
   customerMobile: string | null;
+  currency: Currency;
   dueDate: string;
   id: string;
   isLocked: boolean;
   lineItems: LineItemResponse[];
   orderNumber: string;
-  orderTotalCents: number;
+  orderTotalMinor: number;
   payments: PaymentResponse[];
   status: OrderStatus;
   updatedAt: string;
@@ -80,10 +92,55 @@ export interface OrderListItem extends Omit<OrderResponse, 'lineItems' | 'paymen
 }
 
 export interface OrderSummaryResponse {
+  currency: Currency;
   overdueOrders: number;
-  outstandingCents: number;
-  paymentsReceivedCents: number;
+  outstandingMinor: number;
+  paymentsReceivedMinor: number;
   totalOrders: number;
+}
+
+export interface PaymentConfigResponse {
+  currency: Currency;
+  enabled: boolean;
+  keyId: string | null;
+  mode: 'test';
+  provider: 'razorpay';
+}
+
+export interface PaymentLinkResponse {
+  createdAt: string;
+  id: string;
+  revokedAt: string | null;
+  shareUrl?: string;
+  status: 'active' | 'revoked' | 'paid';
+}
+
+export interface PublicPaymentLinkResponse {
+  amountDueMinor: number;
+  amountPaidMinor: number;
+  currency: Currency;
+  customerLabel: string;
+  id: string;
+  orderNumber: string;
+  orderTotalMinor: number;
+  status: 'active' | 'paid';
+}
+
+export interface PaymentAttemptResponse {
+  amountMinor: number;
+  checkout: {
+    contact: string | null;
+    customerName: string;
+    description: string;
+    keyId: string;
+    orderId: string;
+    timeoutSeconds: number;
+  } | null;
+  createdAt: string;
+  currency: Currency;
+  expiresAt: string;
+  id: string;
+  status: PaymentAttemptStatus;
 }
 
 export interface PaginationMeta {

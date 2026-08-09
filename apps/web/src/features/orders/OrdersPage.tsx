@@ -5,7 +5,7 @@ import {
   ArrowUpDown,
   Banknote,
   Calendar,
-  CircleDollarSign,
+  IndianRupee,
   Clock3,
   Edit3,
   Download,
@@ -23,7 +23,7 @@ import { toast } from 'sonner';
 
 import {
   formatDate,
-  formatUsd,
+  formatInr,
   type OrderListItem,
   type OrderListQuery,
   type OrderExportInput,
@@ -252,7 +252,7 @@ function Kpis({
     },
     {
       label: 'Outstanding',
-      value: summary ? formatUsd(summary.outstandingCents) : '—',
+      value: summary ? formatInr(summary.outstandingMinor) : '—',
       sub: 'Awaiting settlement',
       icon: Clock3,
       tone: 'bg-amber-50 text-amber-600',
@@ -261,12 +261,12 @@ function Kpis({
       label: 'Overdue',
       value: summary ? String(summary.overdueOrders) : '—',
       sub: 'Past their due date',
-      icon: CircleDollarSign,
+      icon: IndianRupee,
       tone: 'bg-red-50 text-red-600',
     },
     {
       label: 'Payments received',
-      value: summary ? formatUsd(summary.paymentsReceivedCents) : '—',
+      value: summary ? formatInr(summary.paymentsReceivedMinor) : '—',
       sub: 'Total amount collected',
       icon: Banknote,
       tone: 'bg-emerald-50 text-emerald-600',
@@ -406,13 +406,13 @@ function DesktopTable({
                 {formatDate(order.dueDate)}
               </td>
               <td className="whitespace-nowrap px-5 py-4 text-right font-semibold text-slate-800 tabular-nums">
-                {formatUsd(order.orderTotalCents)}
+                {formatInr(order.orderTotalMinor)}
               </td>
               <td className="whitespace-nowrap px-5 py-4 text-right text-emerald-700 tabular-nums">
-                {formatUsd(order.amountPaidCents)}
+                {formatInr(order.amountPaidMinor)}
               </td>
               <td className="whitespace-nowrap px-5 py-4 text-right text-slate-600 tabular-nums">
-                {formatUsd(order.amountDueCents)}
+                {formatInr(order.amountDueMinor)}
               </td>
               <td className="px-5 py-4">
                 <StatusBadge status={order.status} />
@@ -505,19 +505,19 @@ function MobileCards({
             <div>
               <dt className="text-slate-400">Total</dt>
               <dd className="mt-1 font-semibold text-slate-800 tabular-nums">
-                {formatUsd(order.orderTotalCents)}
+                {formatInr(order.orderTotalMinor)}
               </dd>
             </div>
             <div>
               <dt className="text-slate-400">Paid</dt>
               <dd className="mt-1 font-semibold text-emerald-700 tabular-nums">
-                {formatUsd(order.amountPaidCents)}
+                {formatInr(order.amountPaidMinor)}
               </dd>
             </div>
             <div>
               <dt className="text-slate-400">Due</dt>
               <dd className="mt-1 font-semibold text-slate-700 tabular-nums">
-                {formatUsd(order.amountDueCents)}
+                {formatInr(order.amountDueMinor)}
               </dd>
             </div>
           </dl>

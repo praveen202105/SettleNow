@@ -5,8 +5,8 @@ function csvCell(value: string | number): string {
   return /[",\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 }
 
-function usdDecimal(cents: number): string {
-  return (cents / 100).toFixed(2);
+function inrDecimal(minor: number): string {
+  return (minor / 100).toFixed(2);
 }
 
 export function ordersToCsv(orders: OrderListItem[]): string {
@@ -31,10 +31,10 @@ export function ordersToCsv(orders: OrderListItem[]): string {
       order.customerMobile ?? '',
       order.dueDate,
       order.status,
-      'USD',
-      usdDecimal(order.orderTotalCents),
-      usdDecimal(order.amountPaidCents),
-      usdDecimal(order.amountDueCents),
+      order.currency,
+      inrDecimal(order.orderTotalMinor),
+      inrDecimal(order.amountPaidMinor),
+      inrDecimal(order.amountDueMinor),
       order.paymentCount,
       order.createdAt,
       order.updatedAt,

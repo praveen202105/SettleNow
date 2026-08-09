@@ -9,8 +9,10 @@ Production: [https://settleflow-production-77e1.up.railway.app](https://settlefl
 - Password and Google authentication with revocable server-side sessions.
 - User-owned customer directory with required international mobile numbers.
 - Searchable customer selection, so repeat orders do not require retyping customer details.
-- Itemized USD orders with server-calculated totals and date-only due dates.
-- Partial payment history, remaining balances and concurrency-safe overpayment prevention.
+- Itemized INR orders with server-calculated totals and date-only due dates.
+- Separate offline payment recording and Razorpay Standard Checkout in permanent Test Mode.
+- Owner-initiated online collection plus revocable customer payment links with selectable partial amounts.
+- Partial payment history, remaining balances and concurrency-safe overpayment prevention across API replicas.
 - Pending, partially paid, overdue and paid status tracking.
 - Filtered dashboards, summary cards, responsive mobile layouts and accessible controls.
 - Asynchronous CSV exports stored in private object storage for 24 hours.
@@ -32,15 +34,19 @@ Railway Edge
                          ├── PostgreSQL primary
                          │     ├── users / auth identities
                          │     ├── customers / orders / payments
+                         │     ├── payment links / attempts / provider events
                          │     └── audit / outbox / exports / deliveries
                          ├── Redis
                          │     ├── opaque sessions
                          │     ├── rate limits and cache versions
                          │     └── BullMQ
-                         └── transactional outbox
+                         └── Razorpay Orders API + signed webhook ingress
+                                   │
+                                   └── transactional outbox
                                    │
                                    ▼
                               private worker
+                               ├── captured/failed payment event finalization
                                ├── CSV → private S3-compatible bucket
                                └── email → Nodemailer MIME → Gmail REST API
 ```
@@ -51,7 +57,7 @@ Dashboard list and summary reads support an optional `READ_DATABASE_URL`. Withou
 
 - `apps/web`: React 19, Vite, Tailwind, TanStack Query, React Hook Form and local Radix-based UI components.
 - `apps/api`: Express 5, Prisma, PostgreSQL, Redis, BullMQ, Nodemailer, object storage and worker entrypoints.
-- `packages/shared`: Zod schemas, API types, cents/date/phone helpers and status rules shared by frontend and backend.
+- `packages/shared`: Zod schemas, API types, minor-unit/date/phone helpers and status rules shared by frontend and backend.
 - `tests/unit`: domain, API helper and component tests.
 - `tests/integration`: authenticated API, database, ownership and concurrency tests.
 - `tests/e2e`: Playwright browser release flows.
@@ -66,8 +72,8 @@ Once the first payment is recorded, an order becomes immutable. Customer selecti
 
 ## Money, dates and statuses
 
-- Currency is USD.
-- Monetary values are integer cents in the API and `BIGINT` in PostgreSQL.
+- Currency is INR. Existing assignment/demo numbers were relabelled without foreign-exchange conversion.
+- Monetary values are integer minor units (`100` = ₹1.00) in the API and `BIGINT` in PostgreSQL.
 - Floating-point arithmetic is never used for payment validation or stored totals.
 - Due dates use ISO `YYYY-MM-DD`; timestamps are UTC.
 - A payment is created inside a PostgreSQL transaction after locking the owning order row.
@@ -79,6 +85,18 @@ Status precedence is:
 2. `overdue` when the due date has passed and a balance remains.
 3. `partially_paid` when at least one payment exists and the order is not overdue.
 4. `pending` when no payment exists and the due date has not passed.
+
+## Razorpay Test Mode collection
+
+Online collection is configuration-gated and can never silently switch to Live Mode. `PAYMENT_MODE` is schema-locked to `test`, `PAYMENT_CURRENCY` to `INR` and the UI permanently says that no real money moves. Offline entries remain available as **Record offline payment** and are stored separately from Razorpay test transactions.
+
+For every checkout SettleFlow creates a fixed-amount Razorpay Order. The amount must be from ₹1 to the current balance. A PostgreSQL partial unique index permits only one `creating` or `pending` attempt per order, while a row lock serializes balance validation. The reservation expires after 15 minutes; the owner can cancel it. Offline recording is blocked while a checkout is active.
+
+Browser success is only a hint. The API verifies Razorpay's HMAC checkout signature, fetches the payment from the provider and then checks captured status, provider order, exact amount and INR currency under an order row lock. Only then are the payment, audit entry and notification outbox event committed together. A mismatch is retained as `needs_review` and does not change the balance.
+
+Razorpay webhooks enter through a raw-body route mounted before JSON and origin middleware. SettleFlow performs timing-safe HMAC verification, persists the minimal validated event and outbox row before acknowledging it, and deduplicates by `x-razorpay-event-id`. BullMQ processing is idempotent by provider payment ID and payment attempt. `payment.captured` is authoritative; out-of-order or duplicate events cannot create duplicate payments.
+
+An owner may generate one active bearer payment link per order. Regeneration revokes the prior token. Only its SHA-256 hash is stored. `/pay/:token` exchanges the token for a short-lived HttpOnly payment-session cookie and immediately replaces the visible URL with `/pay/session/:id`. The public screen exposes only a masked customer label, order number, total, paid and due amounts. It never exposes mobile, notes or line items. One link can collect multiple partial test payments until the order is paid or the link is revoked.
 
 ## Authentication and security
 
@@ -187,6 +205,22 @@ Enable the Gmail API in the Google Cloud project and authorize the dedicated sen
 
 Storage uses provider-neutral `S3_*` variables. Railway's bucket is S3-compatible; this does not imply that SettleFlow uses AWS infrastructure.
 
+Razorpay Test Mode variables, used by `settleflow` and needed by the worker for webhook jobs:
+
+```text
+PAYMENTS_ENABLED=false
+PAYMENT_PROVIDER=razorpay
+PAYMENT_MODE=test
+PAYMENT_CURRENCY=INR
+PAYMENT_SESSION_COOKIE_NAME=settleflow_payment
+PAYMENT_SESSION_TTL_MINUTES=60
+RAZORPAY_KEY_ID=<test-key-id>
+RAZORPAY_KEY_SECRET=<sealed-test-key-secret>
+RAZORPAY_WEBHOOK_SECRET=<sealed-webhook-secret>
+```
+
+Keep `PAYMENTS_ENABLED=false` until the Test Mode key pair and webhook are configured. Never place real credentials in `.env.example`, Git history, logs or browser code. The key ID is intentionally returned to Checkout; the key secret and webhook secret remain server-only.
+
 ## Public API
 
 All routes are under `/api/v1`. Success responses use `{ "data": ..., "meta"?: ... }`. Errors use `{ "error": { "code", "message", "fieldErrors"?, "requestId"?, ... } }`.
@@ -217,9 +251,27 @@ All routes are under `/api/v1`. Success responses use `{ "data": ..., "meta"?: .
 - `PATCH /orders/:id`
 - `DELETE /orders/:id`
 - `POST /orders/:id/payments`
+- `GET /orders/:id/payment-link`
+- `POST /orders/:id/payment-link`
+- `DELETE /orders/:id/payment-link`
+- `POST /orders/:id/payment-attempts`
 - `GET /orders/summary`
 
-Dashboard search matches order number, customer name and customer mobile. `ORDER_LOCKED` prevents edits/deletes after a payment. `PAYMENT_EXCEEDS_BALANCE` returns `maxAllowedCents`.
+`POST /orders/:id/payments` is the offline-payment endpoint. Dashboard search matches order number, customer name and customer mobile. `ORDER_LOCKED` prevents edits/deletes after a payment. `PAYMENT_EXCEEDS_BALANCE` returns `maxAllowedMinor`; `PAYMENT_ATTEMPT_ACTIVE` includes the active attempt and expiry so the UI can resolve the conflict.
+
+### Online and public payment routes
+
+- `GET /payments/config`
+- `GET /payment-attempts/:id`
+- `DELETE /payment-attempts/:id`
+- `POST /payment-attempts/:id/confirm`
+- `POST /public/payment-links/session`
+- `GET /public/payment-links/:id`
+- `POST /public/payment-links/:id/attempts`
+- `GET /public/payment-attempts/:id`
+- `POST /webhooks/razorpay`
+
+Authenticated owners may create attempts and manage links. Public routes require the short-lived payment-session cookie after token exchange. The webhook requires a valid raw-body Razorpay signature and event ID; it does not use user cookies.
 
 ### Activity and exports
 
@@ -230,7 +282,7 @@ Dashboard search matches order number, customer name and customer mobile. `ORDER
 - `POST /exports/:id/retry`
 - `GET /exports/:id/download`
 
-CSV exports snapshot the dashboard filters and include customer name, customer mobile, due date, status, USD totals, payment count and timestamps. Downloads are authenticated and ownership checked.
+CSV exports snapshot the dashboard filters and include customer name, customer mobile, due date, status, INR totals, payment count and timestamps. Downloads are authenticated and ownership checked.
 
 ### Health
 
@@ -250,7 +302,7 @@ pnpm build
 pnpm test:e2e
 ```
 
-`pnpm check` runs the complete sequence. Tests cover money/date/phone behavior, customer ownership and snapshots, Redis sessions/cache, password and Google authentication, order CRUD, payment locking/concurrency, notification idempotency, CSV exports, accessible customer selection and responsive browser flows.
+`pnpm check` runs the complete sequence. Tests cover INR parsing, token hashing, 15-minute expiry, checkout/webhook signatures, provider-event deduplication, customer ownership and snapshots, Redis sessions/cache, password and Google authentication, order CRUD, offline/online payment locking, concurrent finalization, notification idempotency, CSV exports, accessible customer selection and responsive browser flows. Browser tests use an adapter that is accepted only under `NODE_ENV=test`; production cannot enable it.
 
 ## Railway production deployment
 
@@ -261,6 +313,16 @@ The production project uses one Singapore region:
 - PostgreSQL primary, Redis and a private S3-compatible bucket.
 
 The API pre-deploy command is `pnpm db:deploy`, ensuring migrations run once before the two replicas start. The API starts with `pnpm start:prod`; the worker starts with `pnpm start:worker`.
+
+The Razorpay rollout is deliberately disabled-first:
+
+1. Deploy the migration and code with `PAYMENTS_ENABLED=false`.
+2. In Razorpay, switch to **Test Mode** and generate a Test API key pair.
+3. Create a strong independent webhook secret and register `https://settleflow-production-77e1.up.railway.app/api/v1/webhooks/razorpay` for `payment.captured` and `payment.failed`.
+4. Add the key secret and webhook secret as sealed Railway variables on `settleflow`; add payment-mode variables to both `settleflow` and `worker`.
+5. Set `PAYMENTS_ENABLED=true`, deploy, and verify `success@razorpay`, `failure@razorpay`, partial payment, duplicate webhook and owner notification flows.
+
+Live Mode is intentionally out of scope and configuration-blocked. A separate merchant activation, refund/dispute design, compliance and go-live review is required before real-money processing.
 
 The production Gmail rollout uses this sequence:
 
@@ -288,7 +350,12 @@ https://settleflow-production-77e1.up.railway.app/api/v1/auth/google/callback
 - **Worker jobs retrying:** inspect worker logs and `notification_deliveries`; Gmail API errors are retained without exposing OAuth credentials.
 - **Stale dashboard after a write:** verify Redis is reachable; mutations increment user cache versions and force primary reads temporarily.
 - **OAuth account-link-required:** sign in with the existing password account, then connect the matching Google email under Security.
+- **Online actions disabled:** `PAYMENTS_ENABLED` is false or Test Mode credentials have not been staged. This is the expected safe rollout state.
+- **Checkout already active:** cancel it as the owner or wait up to 15 minutes. Offline payments are intentionally blocked during the reservation.
+- **Checkout succeeded but still pending:** wait for the signed `payment.captured` webhook and inspect worker/outbox logs. Never manually trust browser success.
+- **Webhook signature invalid:** confirm the configured secret matches the Razorpay Test Mode webhook and that no proxy transforms the raw request body.
+- **Payment needs review:** provider amount, currency, order, captured status or remaining balance did not match. The order balance was not changed.
 
 ## Current boundaries
 
-Version 1 supports USD, one mobile per customer record and account-owner email notifications. Customer editing/deletion, customer-facing messaging, refunds, multiple currencies, password reset, MFA, a provisioned read replica, staging and multi-region deployment remain outside this release.
+Version 1 supports INR, Razorpay Test Mode, offline payments, one mobile per customer record and account-owner email notifications. Real-money Live Mode, refunds, disputes, subscriptions, automated SMS, customer receipts, customer editing/deletion, multiple currencies, password reset, MFA, a provisioned read replica, staging and multi-region deployment remain outside this release.

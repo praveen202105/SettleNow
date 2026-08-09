@@ -29,6 +29,10 @@ const actionLabels: Record<AuditAction, string> = {
   'order.deleted': 'Order deleted',
   'order.updated': 'Order updated',
   'payment.recorded': 'Payment recorded',
+  'payment.link.created': 'Payment link created',
+  'payment.link.revoked': 'Payment link revoked',
+  'payment.checkout.started': 'Online checkout started',
+  'payment.checkout.failed': 'Online checkout failed',
 };
 
 export function activityLabel(event: AuditEventResponse): string {

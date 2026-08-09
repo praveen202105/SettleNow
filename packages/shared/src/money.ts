@@ -1,4 +1,4 @@
-import { MAX_MONEY_CENTS } from './constants.js';
+import { MAX_MONEY_MINOR } from './constants.js';
 
 const MONEY_PATTERN = /^(?:0|[1-9]\d*)(?:\.(\d{1,2}))?$/;
 
@@ -9,7 +9,7 @@ export class MoneyParseError extends Error {
   }
 }
 
-export function parseMoneyToCents(value: string): number {
+export function parseMoneyToMinor(value: string): number {
   const normalized = value.trim();
   const match = MONEY_PATTERN.exec(normalized);
 
@@ -18,30 +18,30 @@ export function parseMoneyToCents(value: string): number {
   }
 
   const [whole = '0', fraction = ''] = normalized.split('.');
-  const cents = Number(whole) * 100 + Number(fraction.padEnd(2, '0'));
+  const minor = Number(whole) * 100 + Number(fraction.padEnd(2, '0'));
 
-  if (!Number.isSafeInteger(cents) || cents > MAX_MONEY_CENTS) {
+  if (!Number.isSafeInteger(minor) || minor > MAX_MONEY_MINOR) {
     throw new MoneyParseError('Amount is outside the supported range.');
   }
 
-  return cents;
+  return minor;
 }
 
-export function centsToInput(cents: number): string {
-  if (!Number.isSafeInteger(cents) || cents < 0) {
+export function minorToInput(minor: number): string {
+  if (!Number.isSafeInteger(minor) || minor < 0) {
     throw new MoneyParseError('Stored amount is invalid.');
   }
 
-  return (cents / 100).toFixed(2);
+  return (minor / 100).toFixed(2);
 }
 
-export function formatUsd(cents: number): string {
-  if (!Number.isSafeInteger(cents)) {
+export function formatInr(minor: number): string {
+  if (!Number.isSafeInteger(minor)) {
     throw new MoneyParseError('Stored amount is invalid.');
   }
 
-  return new Intl.NumberFormat('en-US', {
+  return new Intl.NumberFormat('en-IN', {
     style: 'currency',
-    currency: 'USD',
-  }).format(cents / 100);
+    currency: 'INR',
+  }).format(minor / 100);
 }

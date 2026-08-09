@@ -1,3 +1,5 @@
+import { createHmac } from 'node:crypto';
+
 import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
@@ -18,6 +20,8 @@ import {
 import { prisma } from '../../../apps/api/src/lib/prisma.js';
 import { disconnectRedis, redis } from '../../../apps/api/src/lib/redis.js';
 import type { MailMessage, MailTransport } from '../../../apps/api/src/services/mailer.js';
+import { processProviderEvent } from '../../../apps/api/src/services/payments.js';
+import type { PaymentProvider, ProviderPayment } from '../../../apps/api/src/services/razorpay.js';
 
 const app = createApp();
 
@@ -40,11 +44,51 @@ class FakeGoogleOidcClient implements GoogleOidcClient {
 
 const fakeGoogle = new FakeGoogleOidcClient();
 const googleApp = createApp({ googleEnabled: true, googleOidcClient: fakeGoogle });
+
+class FakePaymentProvider implements PaymentProvider {
+  orders = new Map<string, { amountMinor: number; orderId: string }>();
+  payments = new Map<string, ProviderPayment>();
+
+  createOrder(input: { amountMinor: number; orderId: string; receipt: string }) {
+    const id = `order_test_${input.receipt}`;
+    this.orders.set(id, { amountMinor: input.amountMinor, orderId: input.orderId });
+    return Promise.resolve({ id });
+  }
+
+  fetchPayment(id: string) {
+    const payment = this.payments.get(id);
+    if (!payment) throw new Error(`Unknown fake payment ${id}`);
+    return Promise.resolve(payment);
+  }
+
+  capture(providerOrderId: string, paymentId: string, method = 'upi') {
+    const order = this.orders.get(providerOrderId);
+    if (!order) throw new Error(`Unknown fake order ${providerOrderId}`);
+    const payment: ProviderPayment = {
+      amountMinor: order.amountMinor,
+      currency: 'INR',
+      id: paymentId,
+      method,
+      orderId: providerOrderId,
+      status: 'captured',
+    };
+    this.payments.set(paymentId, payment);
+    return payment;
+  }
+
+  reset() {
+    this.orders.clear();
+    this.payments.clear();
+  }
+}
+
+const fakePayments = new FakePaymentProvider();
+const paymentApp = createApp({ paymentProvider: fakePayments });
 type TestAgent = ReturnType<typeof request.agent>;
 
 const validOrder = {
   dueDate: '2099-01-15',
-  lineItems: [{ description: 'Implementation', quantity: 1, unitPriceCents: 100_000 }],
+  lineItems: [{ description: 'Implementation', quantity: 1, unitPriceMinor: 100_000 }],
 };
 
 let customerSequence = 0;
@@ -110,9 +154,11 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await prisma.outboxEvent.deleteMany();
+  await prisma.paymentProviderEvent.deleteMany();
   await prisma.user.deleteMany();
   customerSequence = 0;
   fakeGoogle.profiles.clear();
+  fakePayments.reset();
   const keys = await redis.keys('settleflow:*');
   if (keys.length > 0) await redis.del(...keys);
 });
@@ -389,7 +435,7 @@ describe('customer directory', () => {
             description: 'Legacy service',
             position: 0,
             quantity: 1,
-            unitPriceCents: 5_000n,
+            unitPriceMinor: 5_000n,
           },
         },
       },
@@ -419,8 +465,8 @@ describe('orders and settlements', () => {
     expect(created.status).toBe(201);
     const order = created.body.data as OrderResponse;
     expect(order).toMatchObject({
-      orderTotalCents: 100_000,
-      amountDueCents: 100_000,
+      orderTotalMinor: 100_000,
+      amountDueMinor: 100_000,
       status: 'pending',
     });
     expect((await stranger.get(`/api/v1/orders/${order.id}`)).status).toBe(404);
@@ -452,7 +498,7 @@ describe('orders and settlements', () => {
     expect(summary.body.data).toMatchObject({
       totalOrders: 2,
       overdueOrders: 1,
-      outstandingCents: 200_000,
+      outstandingMinor: 200_000,
     });
 
     const deletable = overdue.body.data as OrderResponse;
@@ -460,7 +506,7 @@ describe('orders and settlements', () => {
     expect((await owner.get(`/api/v1/orders/${deletable.id}`)).status).toBe(404);
   });
 
-  it('handles the $1,000 to $400 to $600 flow and locks paid orders', async () => {
+  it('handles the ₹1,000 to ₹400 to ₹600 flow and locks paid orders', async () => {
     const agent = request.agent(app);
     await signup(agent, 'payments@example.com');
     const currentUser = await agent.get('/api/v1/auth/me');
@@ -469,14 +515,14 @@ describe('orders and settlements', () => {
     const order = created.body.data as OrderResponse;
 
     const partial = await agent.post(`/api/v1/orders/${order.id}/payments`).send({
-      amountCents: 40_000,
+      amountMinor: 40_000,
       date: '2026-08-08',
       note: 'Deposit',
     });
     expect(partial.status).toBe(201);
     expect(partial.body.data).toMatchObject({
-      amountPaidCents: 40_000,
-      amountDueCents: 60_000,
+      amountPaidMinor: 40_000,
+      amountDueMinor: 60_000,
       status: 'partially_paid',
       isLocked: true,
     });
@@ -524,14 +570,14 @@ describe('orders and settlements', () => {
     expect(lockedDelete.body.error.code).toBe('ORDER_LOCKED');
 
     const paid = await agent.post(`/api/v1/orders/${order.id}/payments`).send({
-      amountCents: 60_000,
+      amountMinor: 60_000,
       date: '2026-08-08',
       note: 'Final payment',
     });
     expect(paid.status).toBe(201);
     expect(paid.body.data).toMatchObject({
-      amountPaidCents: 100_000,
-      amountDueCents: 0,
+      amountPaidMinor: 100_000,
+      amountDueMinor: 0,
       status: 'paid',
     });
     expect(paid.body.data.payments).toHaveLength(2);
@@ -559,12 +605,275 @@ describe('orders and settlements', () => {
     ).toMatchObject({ status: 'failed', errorMessage: 'Gmail API unavailable' });
 
     const extra = await agent.post(`/api/v1/orders/${order.id}/payments`).send({
-      amountCents: 100,
+      amountMinor: 100,
       date: '2026-08-08',
       note: '',
     });
     expect(extra.status).toBe(409);
-    expect(extra.body.error).toMatchObject({ code: 'PAYMENT_EXCEEDS_BALANCE', maxAllowedCents: 0 });
+    expect(extra.body.error).toMatchObject({ code: 'PAYMENT_EXCEEDS_BALANCE', maxAllowedMinor: 0 });
+  });
+
+  it('collects multiple partial Razorpay test payments through one bearer link', async () => {
+    const owner = request.agent(paymentApp);
+    const stranger = request.agent(paymentApp);
+    const publicCustomer = stranger;
+    await signup(owner, 'online-owner@example.com');
+    await signup(stranger, 'online-stranger@example.com');
+    const created = await createOrder(owner);
+    const order = created.body.data as OrderResponse;
+
+    expect((await stranger.get(`/api/v1/orders/${order.id}/payment-link`)).status).toBe(404);
+    const link = await owner.post(`/api/v1/orders/${order.id}/payment-link`);
+    expect(link.status).toBe(201);
+    expect(link.body.data).toMatchObject({ status: 'active' });
+    const token = new URL(link.body.data.shareUrl as string).pathname.split('/').at(-1)!;
+
+    const exchanged = await publicCustomer
+      .post('/api/v1/public/payment-links/session')
+      .send({ token });
+    expect(exchanged.status).toBe(200);
+    expect(exchanged.headers['set-cookie']?.[0]).toContain('HttpOnly');
+    expect(exchanged.headers['set-cookie']?.[0]).toContain('Path=/api/v1');
+    expect(exchanged.body.data).toMatchObject({
+      amountDueMinor: 100_000,
+      currency: 'INR',
+      customerLabel: 'A•••',
+      status: 'active',
+    });
+    expect(JSON.stringify(exchanged.body.data)).not.toContain('+91');
+
+    const firstAttempt = await publicCustomer
+      .post(`/api/v1/public/payment-links/${link.body.data.id}/attempts`)
+      .send({ amountMinor: 40_000 });
+    expect(firstAttempt.status).toBe(201);
+    expect(firstAttempt.body.data.checkout).toMatchObject({ keyId: 'rzp_test_settleflow' });
+    expect(
+      (
+        await owner.post(`/api/v1/orders/${order.id}/payments`).send({
+          amountMinor: 10_000,
+          date: '2026-08-09',
+          note: 'Must wait',
+        })
+      ).body.error.code,
+    ).toBe('PAYMENT_ATTEMPT_ACTIVE');
+    expect(
+      (
+        await owner
+          .post(`/api/v1/orders/${order.id}/payment-attempts`)
+          .send({ amountMinor: 10_000 })
+      ).body.error.code,
+    ).toBe('PAYMENT_ATTEMPT_ACTIVE');
+
+    const firstProviderOrderId = firstAttempt.body.data.checkout.orderId as string;
+    const firstPaymentId = 'pay_test_partial_1';
+    fakePayments.capture(firstProviderOrderId, firstPaymentId);
+    const firstSignature = createHmac('sha256', 'test_checkout_secret')
+      .update(`${firstProviderOrderId}|${firstPaymentId}`)
+      .digest('hex');
+    const firstConfirmed = await publicCustomer
+      .post(`/api/v1/payment-attempts/${firstAttempt.body.data.id}/confirm`)
+      .send({
+        razorpayOrderId: firstProviderOrderId,
+        razorpayPaymentId: firstPaymentId,
+        razorpaySignature: firstSignature,
+      });
+    expect(firstConfirmed.status).toBe(200);
+    expect(firstConfirmed.body.data.status).toBe('captured');
+    expect(
+      (await publicCustomer.get(`/api/v1/public/payment-links/${link.body.data.id}`)).body.data,
+    ).toMatchObject({ amountDueMinor: 60_000, amountPaidMinor: 40_000, status: 'active' });
+
+    const secondAttempt = await publicCustomer
+      .post(`/api/v1/public/payment-links/${link.body.data.id}/attempts`)
+      .send({ amountMinor: 60_000 });
+    const secondProviderOrderId = secondAttempt.body.data.checkout.orderId as string;
+    const secondPaymentId = 'pay_test_partial_2';
+    fakePayments.capture(secondProviderOrderId, secondPaymentId, 'card');
+    const secondSignature = createHmac('sha256', 'test_checkout_secret')
+      .update(`${secondProviderOrderId}|${secondPaymentId}`)
+      .digest('hex');
+    expect(
+      (
+        await publicCustomer
+          .post(`/api/v1/payment-attempts/${secondAttempt.body.data.id}/confirm`)
+          .send({
+            razorpayOrderId: secondProviderOrderId,
+            razorpayPaymentId: secondPaymentId,
+            razorpaySignature: secondSignature,
+          })
+      ).body.data.status,
+    ).toBe('captured');
+
+    const paid = await owner.get(`/api/v1/orders/${order.id}`);
+    expect(paid.body.data).toMatchObject({
+      amountDueMinor: 0,
+      amountPaidMinor: 100_000,
+      currency: 'INR',
+      status: 'paid',
+    });
+    expect(paid.body.data.payments).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ mode: 'test', source: 'razorpay' }),
+        expect.objectContaining({ mode: 'test', source: 'razorpay' }),
+      ]),
+    );
+    expect(
+      (await publicCustomer.get(`/api/v1/public/payment-links/${link.body.data.id}`)).body.data,
+    ).toMatchObject({ amountDueMinor: 0, status: 'paid' });
+  });
+
+  it('revokes regenerated bearer links and releases expired checkout reservations', async () => {
+    const owner = request.agent(paymentApp);
+    const publicCustomer = request.agent(paymentApp);
+    await signup(owner, 'link-lifecycle@example.com');
+    const order = (await createOrder(owner)).body.data as OrderResponse;
+
+    const firstLink = await owner.post(`/api/v1/orders/${order.id}/payment-link`);
+    const firstToken = new URL(firstLink.body.data.shareUrl as string).pathname.split('/').at(-1)!;
+    const secondLink = await owner.post(`/api/v1/orders/${order.id}/payment-link`);
+    const secondToken = new URL(secondLink.body.data.shareUrl as string).pathname
+      .split('/')
+      .at(-1)!;
+    expect(
+      (
+        await publicCustomer
+          .post('/api/v1/public/payment-links/session')
+          .send({ token: firstToken })
+      ).body.error.code,
+    ).toBe('PAYMENT_LINK_INVALID');
+    expect(
+      (
+        await publicCustomer
+          .post('/api/v1/public/payment-links/session')
+          .send({ token: secondToken })
+      ).status,
+    ).toBe(200);
+
+    const attempts = await Promise.all([
+      owner.post(`/api/v1/orders/${order.id}/payment-attempts`).send({ amountMinor: 10_000 }),
+      owner.post(`/api/v1/orders/${order.id}/payment-attempts`).send({ amountMinor: 10_000 }),
+    ]);
+    expect(attempts.map((response) => response.status).sort()).toEqual([201, 409]);
+    expect(attempts.find((response) => response.status === 409)?.body.error.code).toBe(
+      'PAYMENT_ATTEMPT_ACTIVE',
+    );
+    const attempt = attempts.find((response) => response.status === 201)!;
+    await prisma.paymentAttempt.update({
+      where: { id: attempt.body.data.id as string },
+      data: { expiresAt: new Date(Date.now() - 1_000) },
+    });
+    expect(
+      (await owner.get(`/api/v1/payment-attempts/${attempt.body.data.id}`)).body.data.status,
+    ).toBe('expired');
+    expect(
+      (
+        await owner.post(`/api/v1/orders/${order.id}/payments`).send({
+          amountMinor: 10_000,
+          date: '2026-08-09',
+          note: 'After checkout expiry',
+        })
+      ).status,
+    ).toBe(201);
+
+    expect((await owner.delete(`/api/v1/orders/${order.id}/payment-link`)).status).toBe(200);
+    expect(
+      (await publicCustomer.get(`/api/v1/public/payment-links/${secondLink.body.data.id}`)).body
+        .error.code,
+    ).toBe('PAYMENT_LINK_INVALID');
+  });
+
+  it('persists, deduplicates and idempotently finalizes signed Razorpay webhooks', async () => {
+    const owner = request.agent(paymentApp);
+    await signup(owner, 'webhook-owner@example.com');
+    const order = (await createOrder(owner)).body.data as OrderResponse;
+    const attempt = await owner
+      .post(`/api/v1/orders/${order.id}/payment-attempts`)
+      .send({ amountMinor: 25_000 });
+    const providerOrderId = attempt.body.data.checkout.orderId as string;
+    const rawPayload = JSON.stringify({
+      event: 'payment.captured',
+      payload: {
+        payment: {
+          entity: {
+            amount: 25_000,
+            currency: 'INR',
+            id: 'pay_test_webhook_1',
+            method: 'upi',
+            order_id: providerOrderId,
+            status: 'captured',
+          },
+        },
+      },
+    });
+    const signature = createHmac('sha256', 'test_webhook_secret').update(rawPayload).digest('hex');
+    const sendWebhook = () =>
+      request(paymentApp)
+        .post('/api/v1/webhooks/razorpay')
+        .set('content-type', 'application/json')
+        .set('x-razorpay-event-id', 'event_test_captured_1')
+        .set('x-razorpay-signature', signature)
+        .send(rawPayload);
+
+    expect((await sendWebhook()).status).toBe(200);
+    expect((await sendWebhook()).status).toBe(200);
+    expect(await prisma.paymentProviderEvent.count()).toBe(1);
+    expect(await prisma.outboxEvent.count({ where: { topic: 'payment.provider-event' } })).toBe(1);
+
+    const event = await prisma.paymentProviderEvent.findUniqueOrThrow({
+      where: { providerEventId: 'event_test_captured_1' },
+    });
+    await processProviderEvent(event.id);
+    await processProviderEvent(event.id);
+    expect(await prisma.payment.count({ where: { providerPaymentId: 'pay_test_webhook_1' } })).toBe(
+      1,
+    );
+    expect(await prisma.paymentProviderEvent.findUnique({ where: { id: event.id } })).toMatchObject(
+      { status: 'processed' },
+    );
+    expect((await owner.get(`/api/v1/orders/${order.id}`)).body.data).toMatchObject({
+      amountDueMinor: 75_000,
+      amountPaidMinor: 25_000,
+      status: 'partially_paid',
+    });
+
+    const failedPayload = JSON.stringify({
+      event: 'payment.failed',
+      payload: {
+        payment: {
+          entity: {
+            amount: 25_000,
+            currency: 'INR',
+            id: 'pay_test_webhook_1',
+            method: 'upi',
+            order_id: providerOrderId,
+            status: 'failed',
+          },
+        },
+      },
+    });
+    const failedSignature = createHmac('sha256', 'test_webhook_secret')
+      .update(failedPayload)
+      .digest('hex');
+    expect(
+      (
+        await request(paymentApp)
+          .post('/api/v1/webhooks/razorpay')
+          .set('content-type', 'application/json')
+          .set('x-razorpay-event-id', 'event_test_failed_after_capture')
+          .set('x-razorpay-signature', failedSignature)
+          .send(failedPayload)
+      ).status,
+    ).toBe(200);
+    const outOfOrder = await prisma.paymentProviderEvent.findUniqueOrThrow({
+      where: { providerEventId: 'event_test_failed_after_capture' },
+    });
+    await processProviderEvent(outOfOrder.id);
+    expect(await prisma.payment.count({ where: { providerPaymentId: 'pay_test_webhook_1' } })).toBe(
+      1,
+    );
+    expect(
+      await prisma.paymentAttempt.findUnique({ where: { id: attempt.body.data.id as string } }),
+    ).toMatchObject({ status: 'captured' });
   });
 
   it('serializes concurrent payments so the balance cannot be exceeded', async () => {
@@ -572,7 +881,7 @@ describe('orders and settlements', () => {
     await signup(agent, 'concurrency@example.com');
     const created = await createOrder(agent);
     const order = created.body.data as OrderResponse;
-    const payment = { amountCents: 70_000, date: '2026-08-08', note: '' };
+    const payment = { amountMinor: 70_000, date: '2026-08-08', note: '' };
 
     const responses = await Promise.all([
       agent.post(`/api/v1/orders/${order.id}/payments`).send(payment),
@@ -581,12 +890,12 @@ describe('orders and settlements', () => {
     expect(responses.map((response) => response.status).sort()).toEqual([201, 409]);
     expect(responses.find((response) => response.status === 409)?.body.error).toMatchObject({
       code: 'PAYMENT_EXCEEDS_BALANCE',
-      maxAllowedCents: 30_000,
+      maxAllowedMinor: 30_000,
     });
 
     const final = await agent.get(`/api/v1/orders/${order.id}`);
-    expect(final.body.data.amountPaidCents).toBe(70_000);
-    expect(final.body.data.amountDueCents).toBe(30_000);
+    expect(final.body.data.amountPaidMinor).toBe(70_000);
+    expect(final.body.data.amountDueMinor).toBe(30_000);
   });
 
   it('records activity and produces an owned asynchronous CSV export', async () => {

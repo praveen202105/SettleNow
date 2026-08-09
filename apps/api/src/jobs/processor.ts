@@ -9,6 +9,7 @@ import {
   overdueOrders,
 } from './notificationProcessor.js';
 import type { SettleFlowJobData } from './queue.js';
+import { processProviderEvent } from '../services/payments.js';
 
 function required(value: string | undefined, name: string): string {
   if (!value) throw new Error(`Job is missing ${name}.`);
@@ -38,6 +39,9 @@ export async function processJob(
       return;
     case 'notification.user-welcome':
       await notifyWelcome({ userId: required(job.data.userId, 'userId') });
+      return;
+    case 'payment.provider-event':
+      await processProviderEvent(required(job.data.providerEventId, 'providerEventId'));
       return;
     case 'notification.order-overdue':
       await notifyOrderOverdue({

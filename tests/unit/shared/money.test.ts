@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest';
 
 import {
   MoneyParseError,
-  centsToInput,
-  formatUsd,
-  parseMoneyToCents,
+  minorToInput,
+  formatInr,
+  parseMoneyToMinor,
 } from '../../../packages/shared/src/money.js';
 
 describe('money helpers', () => {
@@ -13,16 +13,16 @@ describe('money helpers', () => {
     ['0.01', 1],
     ['400', 40_000],
     ['1000.5', 100_050],
-  ])('parses %s without floating point arithmetic', (value, cents) => {
-    expect(parseMoneyToCents(value)).toBe(cents);
+  ])('parses %s without floating point arithmetic', (value, minor) => {
+    expect(parseMoneyToMinor(value)).toBe(minor);
   });
 
   it.each(['', '-1', '1.001', '1e3', '01.00'])('rejects invalid input %s', (value) => {
-    expect(() => parseMoneyToCents(value)).toThrow(MoneyParseError);
+    expect(() => parseMoneyToMinor(value)).toThrow(MoneyParseError);
   });
 
   it('formats values for forms and display', () => {
-    expect(centsToInput(100_050)).toBe('1000.50');
-    expect(formatUsd(100_050)).toBe('$1,000.50');
+    expect(minorToInput(100_050)).toBe('1000.50');
+    expect(formatInr(100_050)).toBe('₹1,000.50');
   });
 });

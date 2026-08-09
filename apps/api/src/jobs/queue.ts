@@ -11,12 +11,14 @@ export type SettleFlowJobName =
   | 'notification.export-ready'
   | 'notification.order-overdue'
   | 'notification.payment-recorded'
-  | 'notification.user-welcome';
+  | 'notification.user-welcome'
+  | 'payment.provider-event';
 
 export interface SettleFlowJobData {
   exportId?: string;
   orderId?: string;
   paymentId?: string;
+  providerEventId?: string;
   userId?: string;
 }
 

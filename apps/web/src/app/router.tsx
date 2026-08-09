@@ -35,6 +35,11 @@ const SecurityPage = lazy(() =>
     default: module.SecurityPage,
   })),
 );
+const PublicPaymentPage = lazy(() =>
+  import('../features/payments/PublicPaymentPage').then((module) => ({
+    default: module.PublicPaymentPage,
+  })),
+);
 
 function RouteSuspense({ children }: { children: ReactNode }) {
   return (
@@ -90,6 +95,24 @@ function ErrorPage() {
 }
 
 export const router = createBrowserRouter([
+  {
+    path: '/pay/session/:linkId',
+    element: (
+      <RouteSuspense>
+        <PublicPaymentPage />
+      </RouteSuspense>
+    ),
+    errorElement: <ErrorPage />,
+  },
+  {
+    path: '/pay/:token',
+    element: (
+      <RouteSuspense>
+        <PublicPaymentPage />
+      </RouteSuspense>
+    ),
+    errorElement: <ErrorPage />,
+  },
   {
     path: '/login',
     element: (

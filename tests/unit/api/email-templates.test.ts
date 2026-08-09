@@ -37,13 +37,13 @@ describe('transactional email templates', () => {
 
   it('renders payment, export and overdue templates with actionable details', () => {
     const payment = paymentRecordedEmail({
-      amountCents: 40_000,
+      amountMinor: 40_000,
       appOrigin,
       orderId: 'order-1',
       orderNumber: 'ORD-1001',
     });
     expect(payment.subject).toBe('Payment recorded for ORD-1001');
-    expect(payment.html).toContain('$400.00');
+    expect(payment.html).toContain('₹400.00');
     expect(payment.html).toContain('https://settleflow.example.com/orders/order-1');
 
     const exportEmail = exportReadyEmail({

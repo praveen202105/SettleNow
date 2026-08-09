@@ -17,6 +17,7 @@ function jobName(topic: string): SettleFlowJobName {
     'export.ready': 'notification.export-ready',
     'export.requested': 'export.generate',
     'payment.recorded': 'notification.payment-recorded',
+    'payment.provider-event': 'payment.provider-event',
     'user.welcome': 'notification.user-welcome',
   };
   const name = names[topic];

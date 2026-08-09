@@ -29,7 +29,7 @@ describe('apiRequest', () => {
           error: {
             code: 'PAYMENT_EXCEEDS_BALANCE',
             message: 'Payment exceeds the outstanding balance.',
-            maxAllowedCents: 60_000,
+            maxAllowedMinor: 60_000,
           },
         }),
         { headers: { 'content-type': 'application/json' }, status: 409 },
@@ -41,7 +41,7 @@ describe('apiRequest', () => {
     expect(error).toMatchObject({
       status: 409,
       code: 'PAYMENT_EXCEEDS_BALANCE',
-      details: { maxAllowedCents: 60_000 },
+      details: { maxAllowedMinor: 60_000 },
     });
   });
 });

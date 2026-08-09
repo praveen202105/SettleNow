@@ -39,9 +39,19 @@ const envSchema = z
       .default('info'),
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
     OUTBOX_POLL_INTERVAL_MS: z.coerce.number().int().min(100).max(60_000).default(1_000),
+    PAYMENTS_ENABLED: booleanFromString.default(false),
+    PAYMENT_CURRENCY: z.literal('INR').default('INR'),
+    PAYMENT_MODE: z.literal('test').default('test'),
+    PAYMENT_PROVIDER: z.literal('razorpay').default('razorpay'),
+    PAYMENT_SESSION_COOKIE_NAME: z.string().min(1).max(64).default('settleflow_payment'),
+    PAYMENT_SESSION_TTL_MINUTES: z.coerce.number().int().min(5).max(1440).default(60),
     PORT: z.coerce.number().int().min(1).max(65_535).default(3000),
     READ_AFTER_WRITE_SECONDS: z.coerce.number().int().min(1).max(300).default(10),
     READ_DATABASE_URL: optionalString,
+    RAZORPAY_KEY_ID: optionalString,
+    RAZORPAY_KEY_SECRET: optionalString,
+    RAZORPAY_FAKE_PROVIDER: booleanFromString.default(false),
+    RAZORPAY_WEBHOOK_SECRET: optionalString,
     REDIS_URL: z.string().min(1).default('redis://127.0.0.1:6379'),
     SESSION_COOKIE_NAME: z.string().min(1).max(64).default('settleflow_session'),
     SESSION_TTL_DAYS: z.coerce.number().int().min(1).max(90).default(7),
@@ -59,6 +69,26 @@ const envSchema = z
     RAILWAY_REPLICA_REGION: optionalString,
   })
   .superRefine((value, context) => {
+    if (
+      value.PAYMENTS_ENABLED &&
+      (!value.RAZORPAY_KEY_ID || !value.RAZORPAY_KEY_SECRET || !value.RAZORPAY_WEBHOOK_SECRET)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          'RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET and RAZORPAY_WEBHOOK_SECRET are required when PAYMENTS_ENABLED=true.',
+        path: ['PAYMENTS_ENABLED'],
+      });
+    }
+
+    if (value.RAZORPAY_FAKE_PROVIDER && value.NODE_ENV !== 'test') {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'The fake Razorpay provider is allowed only when NODE_ENV=test.',
+        path: ['RAZORPAY_FAKE_PROVIDER'],
+      });
+    }
+
     if (value.GOOGLE_AUTH_ENABLED && (!value.GOOGLE_CLIENT_ID || !value.GOOGLE_CLIENT_SECRET)) {
       context.addIssue({
         code: z.ZodIssueCode.custom,

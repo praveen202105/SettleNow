@@ -4,6 +4,7 @@ import {
   CreditCard,
   Edit3,
   FileText,
+  Link2,
   Lock,
   ReceiptText,
   Trash2,
@@ -13,7 +14,7 @@ import { useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
-import { formatDate, formatUsd } from '@settleflow/shared';
+import { formatDate, formatInr } from '@settleflow/shared';
 
 import { StatusBadge } from '../../components/StatusBadge';
 import { ActivityTimeline } from '../activity/ActivityTimeline';
@@ -35,16 +36,25 @@ import { ApiClientError } from '../../lib/api';
 import { queryClient } from '../../lib/query';
 import { orderKeys, ordersApi } from './api';
 import { PaymentDialog } from './PaymentDialog';
+import { OnlinePaymentDialog } from '../payments/OnlinePaymentDialog';
+import { PaymentLinkDialog } from '../payments/PaymentLinkDialog';
+import { paymentKeys, paymentsApi } from '../payments/api';
 
 export function OrderDetailPage() {
   const { orderId = '' } = useParams();
   const navigate = useNavigate();
   const [paymentOpen, setPaymentOpen] = useState(false);
+  const [onlinePaymentOpen, setOnlinePaymentOpen] = useState(false);
+  const [paymentLinkOpen, setPaymentLinkOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const order = useQuery({
     queryKey: orderKeys.detail(orderId),
     queryFn: () => ordersApi.detail(orderId),
     enabled: Boolean(orderId),
+  });
+  const paymentConfig = useQuery({
+    queryKey: paymentKeys.config,
+    queryFn: paymentsApi.config,
   });
   const remove = useMutation({
     mutationFn: () => ordersApi.delete(orderId),
@@ -100,8 +110,23 @@ export function OrderDetailPage() {
                 </Link>
               </Button>
             ) : null}
-            <Button disabled={data.amountDueCents === 0} onClick={() => setPaymentOpen(true)}>
-              <CreditCard aria-hidden="true" /> Record payment
+            <Button
+              disabled={data.amountDueMinor === 0 || paymentConfig.data?.enabled !== true}
+              onClick={() => setOnlinePaymentOpen(true)}
+              title={
+                paymentConfig.data?.enabled === false
+                  ? 'Online test payments are not configured.'
+                  : undefined
+              }
+            >
+              <CreditCard aria-hidden="true" /> Collect online
+            </Button>
+            <Button
+              variant="outline"
+              disabled={data.amountDueMinor === 0 || paymentConfig.data?.enabled !== true}
+              onClick={() => setPaymentLinkOpen(true)}
+            >
+              <Link2 aria-hidden="true" /> <span className="hidden sm:inline">Payment link</span>
             </Button>
             <Button
               variant="outline"
@@ -161,13 +186,13 @@ export function OrderDetailPage() {
                     <InfoItem label="Quantity" value={String(item.quantity)} />
                     <InfoItem
                       label="Unit price"
-                      value={formatUsd(item.unitPriceCents)}
+                      value={formatInr(item.unitPriceMinor)}
                       align="right"
                     />
                     <div className="col-span-2 flex items-center justify-between border-t border-slate-100 pt-3">
                       <dt className="text-xs font-medium text-slate-400">Line total</dt>
                       <dd className="font-semibold text-slate-950 tabular-nums">
-                        {formatUsd(item.lineTotalCents)}
+                        {formatInr(item.lineTotalMinor)}
                       </dd>
                     </div>
                   </dl>
@@ -190,10 +215,10 @@ export function OrderDetailPage() {
                       <Td strong>{item.description}</Td>
                       <Td align="right">{item.quantity}</Td>
                       <Td align="right" mono>
-                        {formatUsd(item.unitPriceCents)}
+                        {formatInr(item.unitPriceMinor)}
                       </Td>
                       <Td align="right" mono strong>
-                        {formatUsd(item.lineTotalCents)}
+                        {formatInr(item.lineTotalMinor)}
                       </Td>
                     </tr>
                   ))}
@@ -238,9 +263,15 @@ export function OrderDetailPage() {
                         <p className="mt-1 break-words text-sm text-slate-500">
                           {payment.note || 'No note'}
                         </p>
+                        <Badge
+                          variant={payment.source === 'razorpay' ? 'warning' : 'neutral'}
+                          className="mt-2"
+                        >
+                          {payment.source === 'razorpay' ? 'Razorpay test' : 'Offline'}
+                        </Badge>
                       </div>
                       <p className="shrink-0 text-sm font-bold text-emerald-700 tabular-nums">
-                        {formatUsd(payment.amountCents)}
+                        {formatInr(payment.amountMinor)}
                       </p>
                     </article>
                   ))}
@@ -252,6 +283,7 @@ export function OrderDetailPage() {
                         <Th>Date</Th>
                         <Th align="right">Amount</Th>
                         <Th>Note</Th>
+                        <Th>Source</Th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -259,9 +291,14 @@ export function OrderDetailPage() {
                         <tr key={payment.id}>
                           <Td>{formatDate(payment.date)}</Td>
                           <Td align="right" mono strong className="text-emerald-700">
-                            {formatUsd(payment.amountCents)}
+                            {formatInr(payment.amountMinor)}
                           </Td>
                           <Td>{payment.note || '—'}</Td>
+                          <Td>
+                            <Badge variant={payment.source === 'razorpay' ? 'warning' : 'neutral'}>
+                              {payment.source === 'razorpay' ? 'Razorpay test' : 'Offline'}
+                            </Badge>
+                          </Td>
                         </tr>
                       ))}
                     </tbody>
@@ -281,16 +318,32 @@ export function OrderDetailPage() {
           </CardHeader>
           <CardContent className="pt-5 sm:pt-6">
             <dl className="space-y-4">
-              <SummaryRow label="Order total" value={formatUsd(data.orderTotalCents)} />
-              <SummaryRow label="Amount paid" value={formatUsd(data.amountPaidCents)} success />
+              <SummaryRow label="Order total" value={formatInr(data.orderTotalMinor)} />
+              <SummaryRow label="Amount paid" value={formatInr(data.amountPaidMinor)} success />
               <div className="border-t border-slate-200 pt-4">
-                <SummaryRow label="Amount due" value={formatUsd(data.amountDueCents)} emphasized />
+                <SummaryRow label="Amount due" value={formatInr(data.amountDueMinor)} emphasized />
               </div>
             </dl>
-            {data.amountDueCents > 0 ? (
-              <Button className="mt-6 w-full" onClick={() => setPaymentOpen(true)}>
-                <CreditCard aria-hidden="true" /> Record payment
-              </Button>
+            {data.amountDueMinor > 0 ? (
+              <div className="mt-6 grid gap-2">
+                <Button
+                  className="w-full"
+                  disabled={paymentConfig.data?.enabled !== true}
+                  onClick={() => setOnlinePaymentOpen(true)}
+                >
+                  <CreditCard aria-hidden="true" /> Collect online
+                </Button>
+                <Button
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => setPaymentLinkOpen(true)}
+                >
+                  <Link2 aria-hidden="true" /> Create payment link
+                </Button>
+                <Button variant="ghost" className="w-full" onClick={() => setPaymentOpen(true)}>
+                  Record offline payment
+                </Button>
+              </div>
             ) : (
               <Alert variant="success" className="mt-6">
                 This order is fully paid.
@@ -301,6 +354,8 @@ export function OrderDetailPage() {
       </div>
 
       <PaymentDialog open={paymentOpen} setOpen={setPaymentOpen} order={data} />
+      <OnlinePaymentDialog open={onlinePaymentOpen} setOpen={setOnlinePaymentOpen} order={data} />
+      <PaymentLinkDialog open={paymentLinkOpen} setOpen={setPaymentLinkOpen} order={data} />
       <ConfirmDialog
         open={deleteOpen}
         setOpen={setDeleteOpen}

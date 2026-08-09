@@ -6,10 +6,10 @@ import { toast } from 'sonner';
 import { z } from 'zod';
 
 import {
-  centsToInput,
-  formatUsd,
+  minorToInput,
+  formatInr,
   isIsoDate,
-  parseMoneyToCents,
+  parseMoneyToMinor,
   todayIsoLocal,
   type OrderResponse,
 } from '@settleflow/shared';
@@ -33,7 +33,7 @@ const paymentFormSchema = z.object({
     .min(1, 'Payment amount is required.')
     .refine((value) => {
       try {
-        return parseMoneyToCents(value) > 0;
+        return parseMoneyToMinor(value) > 0;
       } catch {
         return false;
       }
@@ -70,7 +70,7 @@ export function PaymentDialog({
   const mutation = useMutation({
     mutationFn: (values: PaymentFormValues) =>
       ordersApi.recordPayment(order.id, {
-        amountCents: parseMoneyToCents(values.amount),
+        amountMinor: parseMoneyToMinor(values.amount),
         date: values.date,
         note: values.note,
       }),
@@ -102,7 +102,7 @@ export function PaymentDialog({
   return (
     <DialogRoot open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        title="Record payment"
+        title="Record offline payment"
         description={`${order.orderNumber} · ${order.customer}`}
         onOpenAutoFocus={(event) => {
           event.preventDefault();
@@ -119,11 +119,11 @@ export function PaymentDialog({
               Outstanding balance
             </p>
             <p
-              className={`mt-1.5 text-2xl font-bold tabular-nums ${order.amountDueCents > 0 ? 'text-slate-950' : 'text-emerald-700'}`}
+              className={`mt-1.5 text-2xl font-bold tabular-nums ${order.amountDueMinor > 0 ? 'text-slate-950' : 'text-emerald-700'}`}
             >
-              {formatUsd(order.amountDueCents)}
+              {formatInr(order.amountDueMinor)}
             </p>
-            {order.amountDueCents === 0 ? (
+            {order.amountDueMinor === 0 ? (
               <p className="mt-2 flex items-center gap-1.5 text-sm font-semibold text-emerald-700">
                 <CheckCircle2 className="size-4" aria-hidden="true" /> Fully paid
               </p>
@@ -132,12 +132,12 @@ export function PaymentDialog({
 
           {serverMessage ? <Alert variant="danger">{serverMessage}</Alert> : null}
 
-          {order.amountDueCents > 0 ? (
+          {order.amountDueMinor > 0 ? (
             <>
               <Field>
                 <FieldLabel htmlFor="payment-amount">Amount</FieldLabel>
                 <InputGroup>
-                  <InputGroupAddon aria-hidden="true">$</InputGroupAddon>
+                  <InputGroupAddon aria-hidden="true">₹</InputGroupAddon>
                   <InputGroupInput
                     id="payment-amount"
                     inputMode="decimal"
@@ -155,12 +155,12 @@ export function PaymentDialog({
                     type="button"
                     className="font-semibold text-blue-600 hover:underline"
                     onClick={() =>
-                      setValue('amount', centsToInput(order.amountDueCents), {
+                      setValue('amount', minorToInput(order.amountDueMinor), {
                         shouldValidate: true,
                       })
                     }
                   >
-                    Use full balance ({formatUsd(order.amountDueCents)})
+                    Use full balance ({formatInr(order.amountDueMinor)})
                   </button>
                 </FieldDescription>
               </Field>
@@ -190,7 +190,7 @@ export function PaymentDialog({
                   <Button variant="outline">Cancel</Button>
                 </DialogClose>
                 <Button type="submit" disabled={mutation.isPending}>
-                  {mutation.isPending ? <Spinner label="Recording…" /> : 'Record payment'}
+                  {mutation.isPending ? <Spinner label="Recording…" /> : 'Record offline payment'}
                 </Button>
               </div>
             </>

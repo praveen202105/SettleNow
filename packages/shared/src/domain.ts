@@ -2,48 +2,48 @@ import type { OrderStatus } from './types.js';
 
 export interface FinancialLineItem {
   quantity: number;
-  unitPriceCents: number;
+  unitPriceMinor: number;
 }
 
 export interface FinancialPayment {
-  amountCents: number;
+  amountMinor: number;
 }
 
 export interface OrderFinancials {
-  amountDueCents: number;
-  amountPaidCents: number;
-  orderTotalCents: number;
+  amountDueMinor: number;
+  amountPaidMinor: number;
+  orderTotalMinor: number;
 }
 
 export function calculateOrderFinancials(
   lineItems: readonly FinancialLineItem[],
   payments: readonly FinancialPayment[],
 ): OrderFinancials {
-  const orderTotalCents = lineItems.reduce(
-    (sum, item) => sum + item.quantity * item.unitPriceCents,
+  const orderTotalMinor = lineItems.reduce(
+    (sum, item) => sum + item.quantity * item.unitPriceMinor,
     0,
   );
-  const amountPaidCents = payments.reduce((sum, payment) => sum + payment.amountCents, 0);
+  const amountPaidMinor = payments.reduce((sum, payment) => sum + payment.amountMinor, 0);
 
-  if (!Number.isSafeInteger(orderTotalCents) || !Number.isSafeInteger(amountPaidCents)) {
+  if (!Number.isSafeInteger(orderTotalMinor) || !Number.isSafeInteger(amountPaidMinor)) {
     throw new RangeError('Calculated amount exceeds the supported range.');
   }
 
   return {
-    orderTotalCents,
-    amountPaidCents,
-    amountDueCents: Math.max(0, orderTotalCents - amountPaidCents),
+    orderTotalMinor,
+    amountPaidMinor,
+    amountDueMinor: Math.max(0, orderTotalMinor - amountPaidMinor),
   };
 }
 
 export function deriveOrderStatus(input: {
-  amountPaidCents: number;
+  amountPaidMinor: number;
   dueDate: string;
-  orderTotalCents: number;
+  orderTotalMinor: number;
   paymentCount: number;
   today: string;
 }): OrderStatus {
-  if (input.amountPaidCents >= input.orderTotalCents) return 'paid';
+  if (input.amountPaidMinor >= input.orderTotalMinor) return 'paid';
   if (input.dueDate < input.today) return 'overdue';
   if (input.paymentCount > 0) return 'partially_paid';
   return 'pending';

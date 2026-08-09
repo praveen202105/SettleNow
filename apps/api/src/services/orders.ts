@@ -54,22 +54,27 @@ export function presentOrder(order: OrderWithRelations, today = todayIsoUtc()): 
   const lineItems = [...order.lineItems]
     .sort((a, b) => a.position - b.position)
     .map((item: OrderItem) => {
-      const unitPriceCents = toSafeNumber(item.unitPriceCents);
+      const unitPriceMinor = toSafeNumber(item.unitPriceMinor);
       return {
         id: item.id,
         description: item.description,
         quantity: item.quantity,
-        unitPriceCents,
-        lineTotalCents: item.quantity * unitPriceCents,
+        unitPriceMinor,
+        lineTotalMinor: item.quantity * unitPriceMinor,
       };
     });
   const payments = [...order.payments]
     .sort((a, b) => b.date.getTime() - a.date.getTime())
     .map((payment: Payment) => ({
       id: payment.id,
-      amountCents: toSafeNumber(payment.amountCents),
+      amountMinor: toSafeNumber(payment.amountMinor),
+      currency: payment.currency as 'INR',
       date: dateOnly(payment.date),
+      method: payment.method,
+      mode: payment.mode as 'manual' | 'test',
       note: payment.note,
+      providerPaymentId: payment.providerPaymentId,
+      source: payment.source as 'offline' | 'razorpay',
       createdAt: payment.createdAt.toISOString(),
     }));
   const financials = calculateOrderFinancials(lineItems, payments);
@@ -80,6 +85,7 @@ export function presentOrder(order: OrderWithRelations, today = todayIsoUtc()): 
     customer: order.customer,
     customerId: order.customerId,
     customerMobile: order.customerMobile,
+    currency: 'INR' as const,
     dueDate: dateOnly(order.dueDate),
     createdAt: order.createdAt.toISOString(),
     updatedAt: order.updatedAt.toISOString(),
@@ -108,7 +114,7 @@ async function findOwnedCustomer(db: DbClient, userId: string, id: string) {
   return customer;
 }
 
-async function findOwnedOrder(
+export async function findOwnedOrder(
   db: DbClient,
   userId: string,
   id: string,
@@ -119,7 +125,7 @@ async function findOwnedOrder(
   });
 }
 
-async function lockOwnedOrder(
+export async function lockOwnedOrder(
   transaction: Prisma.TransactionClient,
   userId: string,
   id: string,
@@ -161,7 +167,7 @@ export async function createOrder(
             description: item.description,
             position,
             quantity: item.quantity,
-            unitPriceCents: BigInt(item.unitPriceCents),
+            unitPriceMinor: BigInt(item.unitPriceMinor),
           })),
         },
       },
@@ -216,7 +222,7 @@ export async function updateOrder(
             description: item.description,
             position,
             quantity: item.quantity,
-            unitPriceCents: BigInt(item.unitPriceCents),
+            unitPriceMinor: BigInt(item.unitPriceMinor),
           })),
         },
       },
@@ -287,26 +293,54 @@ export async function recordPayment(
       const order = await findOwnedOrder(transaction, userId, id);
       if (!order) throw new AppError(404, 'ORDER_NOT_FOUND', 'Order not found.');
 
+      await transaction.paymentAttempt.updateMany({
+        where: {
+          orderId: id,
+          status: { in: ['creating', 'pending'] },
+          expiresAt: { lte: new Date() },
+        },
+        data: { status: 'expired' },
+      });
+      const activeAttempt = await transaction.paymentAttempt.findFirst({
+        where: {
+          orderId: id,
+          status: { in: ['creating', 'pending'] },
+          expiresAt: { gt: new Date() },
+        },
+        select: { expiresAt: true, id: true },
+      });
+      if (activeAttempt) {
+        throw new AppError(
+          409,
+          'PAYMENT_ATTEMPT_ACTIVE',
+          'Cancel the active online checkout or wait for it to expire before recording an offline payment.',
+          { attemptId: activeAttempt.id, expiresAt: activeAttempt.expiresAt.toISOString() },
+        );
+      }
+
       const current = presentOrder(order);
-      if (input.amountCents > current.amountDueCents) {
+      if (input.amountMinor > current.amountDueMinor) {
         throw new AppError(
           409,
           'PAYMENT_EXCEEDS_BALANCE',
           'Payment exceeds the outstanding balance.',
-          { maxAllowedCents: current.amountDueCents },
+          { maxAllowedMinor: current.amountDueMinor },
         );
       }
 
-      if (current.amountDueCents === 0) {
+      if (current.amountDueMinor === 0) {
         throw new AppError(409, 'ORDER_ALREADY_PAID', 'This order is already fully paid.');
       }
 
       const payment = await transaction.payment.create({
         data: {
-          amountCents: BigInt(input.amountCents),
+          amountMinor: BigInt(input.amountMinor),
+          currency: 'INR',
           date: parseDateOnly(input.date),
           note: input.note || null,
           orderId: id,
+          mode: 'manual',
+          source: 'offline',
         },
       });
 
@@ -315,7 +349,8 @@ export async function recordPayment(
         entityId: payment.id,
         entityType: 'payment',
         metadata: {
-          amountCents: input.amountCents,
+          amountMinor: input.amountMinor,
+          currency: 'INR',
           orderNumber: current.orderNumber,
         },
         orderId: id,
@@ -344,15 +379,15 @@ export async function recordPayment(
 }
 
 interface OrderListRow {
-  amountDueCents: bigint;
-  amountPaidCents: bigint;
+  amountDueMinor: bigint;
+  amountPaidMinor: bigint;
   createdAt: Date;
   customer: string;
   customerId: string | null;
   customerMobile: string | null;
   dueDate: Date;
   id: string;
-  orderTotalCents: bigint;
+  orderTotalMinor: bigint;
   paymentCount: bigint;
   publicId: number;
   status: string;
@@ -371,18 +406,18 @@ function financialCte(userId: string, today: string): Prisma.Sql {
         o."due_date" AS "dueDate",
         o."created_at" AS "createdAt",
         o."updated_at" AS "updatedAt",
-        COALESCE(items."orderTotalCents", 0)::bigint AS "orderTotalCents",
-        COALESCE(payments."amountPaidCents", 0)::bigint AS "amountPaidCents",
+        COALESCE(items."orderTotalMinor", 0)::bigint AS "orderTotalMinor",
+        COALESCE(payments."amountPaidMinor", 0)::bigint AS "amountPaidMinor",
         COALESCE(payments."paymentCount", 0)::bigint AS "paymentCount"
       FROM "orders" o
       LEFT JOIN LATERAL (
-        SELECT SUM(oi."quantity" * oi."unit_price_cents")::bigint AS "orderTotalCents"
+        SELECT SUM(oi."quantity" * oi."unit_price_minor")::bigint AS "orderTotalMinor"
         FROM "order_items" oi
         WHERE oi."order_id" = o."id"
       ) items ON TRUE
       LEFT JOIN LATERAL (
         SELECT
-          SUM(p."amount_cents")::bigint AS "amountPaidCents",
+          SUM(p."amount_minor")::bigint AS "amountPaidMinor",
           COUNT(*)::bigint AS "paymentCount"
         FROM "payments" p
         WHERE p."order_id" = o."id"
@@ -391,9 +426,9 @@ function financialCte(userId: string, today: string): Prisma.Sql {
     ), statuses AS (
       SELECT
         *,
-        GREATEST(0, "orderTotalCents" - "amountPaidCents")::bigint AS "amountDueCents",
+        GREATEST(0, "orderTotalMinor" - "amountPaidMinor")::bigint AS "amountDueMinor",
         CASE
-          WHEN "amountPaidCents" >= "orderTotalCents" THEN 'paid'
+          WHEN "amountPaidMinor" >= "orderTotalMinor" THEN 'paid'
           WHEN "dueDate" < CAST(${today} AS DATE) THEN 'overdue'
           WHEN "paymentCount" > 0 THEN 'partially_paid'
           ELSE 'pending'
@@ -437,7 +472,7 @@ export async function listOrders(
     orderNumber: Prisma.sql`"publicId"`,
     customer: Prisma.sql`LOWER("customer")`,
     dueDate: Prisma.sql`"dueDate"`,
-    total: Prisma.sql`"orderTotalCents"`,
+    total: Prisma.sql`"orderTotalMinor"`,
     status: Prisma.sql`"status"`,
   };
   const direction = query.direction === 'asc' ? Prisma.sql`ASC` : Prisma.sql`DESC`;
@@ -465,12 +500,13 @@ export async function listOrders(
     customer: row.customer,
     customerId: row.customerId,
     customerMobile: row.customerMobile,
+    currency: 'INR' as const,
     dueDate: dateOnly(row.dueDate),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
-    orderTotalCents: toSafeNumber(row.orderTotalCents),
-    amountPaidCents: toSafeNumber(row.amountPaidCents),
-    amountDueCents: toSafeNumber(row.amountDueCents),
+    orderTotalMinor: toSafeNumber(row.orderTotalMinor),
+    amountPaidMinor: toSafeNumber(row.amountPaidMinor),
+    amountDueMinor: toSafeNumber(row.amountDueMinor),
     paymentCount: toSafeNumber(row.paymentCount),
     status: row.status as OrderListItem['status'],
     isLocked: row.paymentCount > 0n,
@@ -498,25 +534,26 @@ export async function getOrderSummary(userId: string): Promise<OrderSummaryRespo
   const rows = await database.$queryRaw<
     Array<{
       overdueOrders: bigint;
-      outstandingCents: bigint;
-      paymentsReceivedCents: bigint;
+      outstandingMinor: bigint;
+      paymentsReceivedMinor: bigint;
       totalOrders: bigint;
     }>
   >(Prisma.sql`
     ${cte}
     SELECT
       COUNT(*)::bigint AS "totalOrders",
-      COALESCE(SUM("amountDueCents"), 0)::bigint AS "outstandingCents",
-      COALESCE(SUM("amountPaidCents"), 0)::bigint AS "paymentsReceivedCents",
+      COALESCE(SUM("amountDueMinor"), 0)::bigint AS "outstandingMinor",
+      COALESCE(SUM("amountPaidMinor"), 0)::bigint AS "paymentsReceivedMinor",
       COUNT(*) FILTER (WHERE "status" = 'overdue')::bigint AS "overdueOrders"
     FROM statuses
   `);
   const row = rows[0];
 
   const result = {
+    currency: 'INR' as const,
     totalOrders: toSafeNumber(row?.totalOrders ?? 0n),
-    outstandingCents: toSafeNumber(row?.outstandingCents ?? 0n),
-    paymentsReceivedCents: toSafeNumber(row?.paymentsReceivedCents ?? 0n),
+    outstandingMinor: toSafeNumber(row?.outstandingMinor ?? 0n),
+    paymentsReceivedMinor: toSafeNumber(row?.paymentsReceivedMinor ?? 0n),
     overdueOrders: toSafeNumber(row?.overdueOrders ?? 0n),
   };
   await writeCachedJson(cacheKey, result);

@@ -70,6 +70,8 @@ model Order {
   user                    User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
   lineItems               OrderItem[]
   payments                Payment[]
+  paymentLinks            PaymentCollectionLink[]
+  paymentAttempts         PaymentAttempt[]
   auditEvents             AuditEvent[]
   notificationDeliveries NotificationDelivery[]
 
@@ -84,7 +86,7 @@ model OrderItem {
   id             String @id @default(uuid())
   description    String
   quantity       Int
-  unitPriceCents BigInt @map("unit_price_cents")
+  unitPriceMinor BigInt @map("unit_price_minor")
   position       Int
   orderId        String @map("order_id")
   order          Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
@@ -94,16 +96,82 @@ model OrderItem {
 }
 
 model Payment {
-  id          String   @id @default(uuid())
-  amountCents BigInt   @map("amount_cents")
-  date        DateTime @db.Date
-  note        String?
-  createdAt   DateTime @default(now()) @map("created_at")
-  orderId     String   @map("order_id")
-  order       Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  id                String          @id @default(uuid())
+  amountMinor       BigInt          @map("amount_minor")
+  currency          String          @default("INR")
+  source            String          @default("offline")
+  mode              String          @default("manual")
+  providerPaymentId String?         @unique @map("provider_payment_id")
+  method            String?
+  date              DateTime        @db.Date
+  note              String?
+  createdAt         DateTime        @default(now()) @map("created_at")
+  orderId           String          @map("order_id")
+  order             Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  paymentAttemptId  String?         @unique @map("payment_attempt_id")
+  paymentAttempt    PaymentAttempt? @relation(fields: [paymentAttemptId], references: [id], onDelete: SetNull)
 
   @@index([orderId, date])
   @@map("payments")
+}
+
+model PaymentCollectionLink {
+  id         String           @id @default(uuid())
+  tokenHash  String           @unique @map("token_hash")
+  createdAt  DateTime         @default(now()) @map("created_at")
+  revokedAt  DateTime?        @map("revoked_at")
+  orderId    String           @map("order_id")
+  order      Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  attempts   PaymentAttempt[]
+
+  @@index([orderId, createdAt])
+  @@map("payment_collection_links")
+}
+
+model PaymentAttempt {
+  id                String                 @id @default(uuid())
+  status            String                 @default("creating")
+  amountMinor       BigInt                 @map("amount_minor")
+  currency          String                 @default("INR")
+  providerOrderId   String?                @unique @map("provider_order_id")
+  providerPaymentId String?                @unique @map("provider_payment_id")
+  providerMethod    String?                @map("provider_method")
+  failureCode       String?                @map("failure_code")
+  failureMessage    String?                @map("failure_message")
+  expiresAt         DateTime               @map("expires_at")
+  completedAt       DateTime?              @map("completed_at")
+  createdAt         DateTime               @default(now()) @map("created_at")
+  updatedAt         DateTime               @updatedAt @map("updated_at")
+  orderId           String                 @map("order_id")
+  order             Order                  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  paymentLinkId     String?                @map("payment_link_id")
+  paymentLink       PaymentCollectionLink? @relation(fields: [paymentLinkId], references: [id], onDelete: SetNull)
+  payment           Payment?
+
+  @@index([orderId, status, expiresAt])
+  @@index([paymentLinkId, createdAt])
+  @@map("payment_attempts")
+}
+
+model PaymentProviderEvent {
+  id                String    @id @default(uuid())
+  providerEventId   String    @unique @map("provider_event_id")
+  eventType         String    @map("event_type")
+  providerPaymentId String?   @map("provider_payment_id")
+  providerOrderId   String?   @map("provider_order_id")
+  amountMinor       BigInt?   @map("amount_minor")
+  currency          String?
+  paymentStatus     String?   @map("payment_status")
+  method            String?
+  payload           Json      @default("{}")
+  status            String    @default("pending")
+  processedAt       DateTime? @map("processed_at")
+  errorMessage      String?   @map("error_message")
+  createdAt         DateTime  @default(now()) @map("created_at")
+
+  @@index([status, createdAt])
+  @@index([providerOrderId])
+  @@map("payment_provider_events")
 }
 
 model AuditEvent {

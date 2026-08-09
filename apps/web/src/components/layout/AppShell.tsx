@@ -143,6 +143,12 @@ export function AppShell() {
             <NavLink to="/orders/new">New order</NavLink>
           </Button>
         </header>
+        <div
+          role="status"
+          className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-center text-xs font-semibold text-amber-900"
+        >
+          Razorpay Test Mode — payments are simulated and no real money moves.
+        </div>
         <main id="main-content" className="min-w-0 flex-1">
           <Outlet />
         </main>
