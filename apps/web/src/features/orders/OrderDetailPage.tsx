@@ -82,6 +82,12 @@ export function OrderDetailPage() {
   }
 
   const data = order.data;
+  const onlinePaymentsEnabled = paymentConfig.data?.enabled === true;
+  const onlinePaymentUnavailableMessage = paymentConfig.isError
+    ? 'Online checkout is temporarily unavailable. You can still record an offline payment.'
+    : paymentConfig.isPending
+      ? 'Checking online payment availability…'
+      : 'Razorpay Test Mode setup is pending. You can still record an offline payment.';
   return (
     <div className="min-h-screen">
       <PageHeader
@@ -111,20 +117,17 @@ export function OrderDetailPage() {
               </Button>
             ) : null}
             <Button
-              disabled={data.amountDueMinor === 0 || paymentConfig.data?.enabled !== true}
-              onClick={() => setOnlinePaymentOpen(true)}
-              title={
-                paymentConfig.data?.enabled === false
-                  ? 'Online test payments are not configured.'
-                  : undefined
-              }
+              disabled={data.amountDueMinor === 0 || !onlinePaymentsEnabled}
+              onClick={() => onlinePaymentsEnabled && setOnlinePaymentOpen(true)}
+              title={!onlinePaymentsEnabled ? onlinePaymentUnavailableMessage : undefined}
             >
               <CreditCard aria-hidden="true" /> Collect online
             </Button>
             <Button
               variant="outline"
-              disabled={data.amountDueMinor === 0 || paymentConfig.data?.enabled !== true}
-              onClick={() => setPaymentLinkOpen(true)}
+              disabled={data.amountDueMinor === 0 || !onlinePaymentsEnabled}
+              onClick={() => onlinePaymentsEnabled && setPaymentLinkOpen(true)}
+              title={!onlinePaymentsEnabled ? onlinePaymentUnavailableMessage : undefined}
             >
               <Link2 aria-hidden="true" /> <span className="hidden sm:inline">Payment link</span>
             </Button>
@@ -326,17 +329,25 @@ export function OrderDetailPage() {
             </dl>
             {data.amountDueMinor > 0 ? (
               <div className="mt-6 grid gap-2">
+                {!onlinePaymentsEnabled ? (
+                  <Alert variant="warning" title="Online checkout unavailable" className="mb-1">
+                    {onlinePaymentUnavailableMessage}
+                  </Alert>
+                ) : null}
                 <Button
                   className="w-full"
-                  disabled={paymentConfig.data?.enabled !== true}
-                  onClick={() => setOnlinePaymentOpen(true)}
+                  disabled={!onlinePaymentsEnabled}
+                  onClick={() => onlinePaymentsEnabled && setOnlinePaymentOpen(true)}
+                  title={!onlinePaymentsEnabled ? onlinePaymentUnavailableMessage : undefined}
                 >
                   <CreditCard aria-hidden="true" /> Collect online
                 </Button>
                 <Button
                   variant="outline"
                   className="w-full"
-                  onClick={() => setPaymentLinkOpen(true)}
+                  disabled={!onlinePaymentsEnabled}
+                  onClick={() => onlinePaymentsEnabled && setPaymentLinkOpen(true)}
+                  title={!onlinePaymentsEnabled ? onlinePaymentUnavailableMessage : undefined}
                 >
                   <Link2 aria-hidden="true" /> Create payment link
                 </Button>
@@ -354,8 +365,16 @@ export function OrderDetailPage() {
       </div>
 
       <PaymentDialog open={paymentOpen} setOpen={setPaymentOpen} order={data} />
-      <OnlinePaymentDialog open={onlinePaymentOpen} setOpen={setOnlinePaymentOpen} order={data} />
-      <PaymentLinkDialog open={paymentLinkOpen} setOpen={setPaymentLinkOpen} order={data} />
+      {onlinePaymentsEnabled ? (
+        <>
+          <OnlinePaymentDialog
+            open={onlinePaymentOpen}
+            setOpen={setOnlinePaymentOpen}
+            order={data}
+          />
+          <PaymentLinkDialog open={paymentLinkOpen} setOpen={setPaymentLinkOpen} order={data} />
+        </>
+      ) : null}
       <ConfirmDialog
         open={deleteOpen}
         setOpen={setDeleteOpen}

@@ -3,7 +3,7 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { LockKeyhole, Mail } from 'lucide-react';
 import { useState } from 'react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ConfirmDialog } from '../../../apps/web/src/components/ui/ConfirmDialog';
@@ -19,8 +19,9 @@ import { activityLabel } from '../../../apps/web/src/features/activity/ActivityT
 import { AuthModeSwitch, AuthPage } from '../../../apps/web/src/features/auth/AuthPage';
 import { authQueryKey } from '../../../apps/web/src/features/auth/hooks';
 import { CustomerCombobox } from '../../../apps/web/src/features/customers/CustomerCombobox';
+import { OrderDetailPage } from '../../../apps/web/src/features/orders/OrderDetailPage';
 import { SecurityPage } from '../../../apps/web/src/features/settings/SecurityPage';
-import type { CustomerResponse } from '../../../packages/shared/src/types';
+import type { CustomerResponse, OrderResponse } from '../../../packages/shared/src/types';
 
 afterEach(() => {
   cleanup();
@@ -136,6 +137,86 @@ describe('navigation and overlays', () => {
       />,
     );
     await waitFor(() => expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus());
+  });
+});
+
+describe('online payment availability', () => {
+  it('keeps every online action disabled when the provider is not configured', async () => {
+    const order: OrderResponse = {
+      amountDueMinor: 100_000,
+      amountPaidMinor: 0,
+      createdAt: '2026-08-08T00:00:00.000Z',
+      currency: 'INR',
+      customer: 'Northstar Labs',
+      customerId: 'customer-1',
+      customerMobile: '+919876543210',
+      dueDate: '2099-12-31',
+      id: 'order-1',
+      isLocked: false,
+      lineItems: [
+        {
+          description: 'Annual subscription',
+          id: 'item-1',
+          lineTotalMinor: 100_000,
+          quantity: 1,
+          unitPriceMinor: 100_000,
+        },
+      ],
+      orderNumber: 'ORD-1001',
+      orderTotalMinor: 100_000,
+      payments: [],
+      status: 'pending',
+      updatedAt: '2026-08-08T00:00:00.000Z',
+    };
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const url = requestUrl(input);
+      if (url.endsWith('/orders/order-1')) return jsonResponse({ data: order });
+      if (url.endsWith('/payments/config')) {
+        return jsonResponse({
+          data: {
+            currency: 'INR',
+            enabled: false,
+            keyId: null,
+            mode: 'test',
+            provider: 'razorpay',
+          },
+        });
+      }
+      if (url.includes('/activity?')) {
+        return jsonResponse({
+          data: [],
+          meta: { page: 1, pageSize: 10, total: 0, totalPages: 1 },
+        });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/orders/order-1']}>
+          <Routes>
+            <Route path="/orders/:orderId" element={<OrderDetailPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByRole('heading', { name: 'ORD-1001' })).toBeVisible();
+    expect(await screen.findByText('Online checkout unavailable')).toBeVisible();
+    for (const button of screen.getAllByRole('button', { name: 'Collect online' })) {
+      expect(button).toBeDisabled();
+    }
+    expect(screen.getByRole('button', { name: 'Payment link' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Create payment link' })).toBeDisabled();
+    expect(
+      screen.queryByText('Online test payments are not configured yet.'),
+    ).not.toBeInTheDocument();
+    expect(
+      fetchMock.mock.calls.some(
+        ([input, init]) => requestUrl(input).includes('/payment-link') && init?.method === 'POST',
+      ),
+    ).toBe(false);
   });
 });
 
